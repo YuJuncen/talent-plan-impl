@@ -2,7 +2,7 @@ use failure::Fail;
 
 pub type Result<T> = std::result::Result<T, KvError>;
 
-#[derive(Debug, Fail, PartialEq, Eq)]
+#[derive(Debug, Fail)]
 pub enum KvError {
     #[fail(display = "Failed to open file {} because error [{}].", file_name, io_error)]
     FailToOpenFile {
