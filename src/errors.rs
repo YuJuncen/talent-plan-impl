@@ -4,24 +4,30 @@ pub type Result<T> = std::result::Result<T, KvError>;
 
 #[derive(Debug, Fail)]
 pub enum KvError {
-    #[fail(display = "Failed to open file {} because error [{}].", file_name, io_error)]
+    #[fail(
+        display = "Failed to open file {} because error [{}].",
+        file_name, io_error
+    )]
     FailToOpenFile {
         file_name: String,
         #[cause]
-        io_error: std::io::Error
+        io_error: std::io::Error,
     },
-    #[fail(display = "Failed because some unexpected IO exception [{}].", io_error)]
+    #[fail(
+        display = "Failed because some unexpected IO exception [{}].",
+        io_error
+    )]
     OtherIOException {
         #[cause]
-        io_error: std::io::Error
+        io_error: std::io::Error,
     },
     #[fail(display = "Failed to parse file because error [{}]", serde_error)]
     FailToParseFile {
         #[cause]
-        serde_error: serde_json::Error
+        serde_error: serde_json::Error,
     },
     #[fail(display = "key not found")]
-    KeyNotFound
+    KeyNotFound,
 }
 
 impl From<serde_json::Error> for KvError {
