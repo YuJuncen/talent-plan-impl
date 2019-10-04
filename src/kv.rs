@@ -13,20 +13,25 @@ use super::{KvError, Result};
 
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Clone, Copy)]
 struct BinLocation {
-    offset : usize,
-    length : usize
+    offset: usize,
+    length: usize,
 }
 
 pub struct KvStore {
     index: HashMap<String, BinLocation>,
     file: File,
-    path: PathBuf
+    path: PathBuf,
+    steal: usize,
+}
+
+impl KvStore {
+    const STEAL_THRESHOLDS: usize = 1024 * 1024 * 8; // 8MB
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 enum KvCommand {
-    Put { key : String, value: String },
-    Rm { key : String }
+    Put { key: String, value: String },
+    Rm { key: String },
 }
 
 impl KvCommand {
@@ -40,19 +45,21 @@ impl KvCommand {
 
     fn key(&self) -> &str {
         match self {
-            KvCommand::Put {key, ..} => key,
-            KvCommand::Rm {key} => key
-        }.as_str()
+            KvCommand::Put { key, .. } => key,
+            KvCommand::Rm { key } => key,
+        }
+        .as_str()
     }
 }
 
 impl KvStore {
     /// build the in-memory index from file.
-    fn build_index(&mut self) -> Result<()> {
+    fn build_index(&mut self) -> Result<usize> {
         self.file.seek(SeekFrom::Start(0))?;
         let mut reader = BufReader::new(&mut self.file);
         let mut buf = String::new();
         let mut x;
+        let mut steal = 0;
         while {
             x = reader.read_line(&mut buf)?;
             x > 0
@@ -60,17 +67,35 @@ impl KvStore {
             let json = serde_json::from_slice(buf.as_bytes())?;
             match json {
                 KvCommand::Put { key: key_read, .. } => {
-                    let offset = reader.stream_position()? as usize;
-                   self.index.insert(key_read, BinLocation { offset: offset - x, length: x });
-                },
+                    let offset = reader.seek(SeekFrom::Current(0))? as usize;
+                    let old = self.index.insert(
+                        key_read,
+                        BinLocation {
+                            offset: offset - x,
+                            length: x,
+                        },
+                    );
+                    if let Some(BinLocation { length, .. }) = old {
+                        steal += length
+                    }
+                }
                 KvCommand::Rm { key: key_read } => {
-                    let offset = reader.stream_position()? as usize;
-                    self.index.insert(key_read, BinLocation { offset: offset - x, length: x });
+                    let offset = reader.seek(SeekFrom::Current(0))? as usize;
+                    let old = self.index.insert(
+                        key_read,
+                        BinLocation {
+                            offset: offset - x,
+                            length: x,
+                        },
+                    );
+                    if let Some(BinLocation { length, .. }) = old {
+                        steal += length
+                    }
                 }
             }
             buf.clear();
         }
-        Ok(())
+        Ok(steal)
     }
 
     /// load a command from one `BinLocation`.
@@ -87,9 +112,21 @@ impl KvStore {
     fn save_command(&mut self, command: KvCommand) -> Result<()> {
         let serialized = Self::serialize_command(&command);
         let offset = self.file.seek(SeekFrom::Current(0))? as usize;
-        self.file.write(serialized.as_bytes())?;
+        self.file.write_all(serialized.as_bytes())?;
         let key = command.key().to_owned();
-        self.index.insert(key, BinLocation { offset, length: serialized.len() });
+        let old = self.index.insert(
+            key,
+            BinLocation {
+                offset,
+                length: serialized.len(),
+            },
+        );
+        if let Some(BinLocation { length, .. }) = old {
+            self.steal += length;
+            if self.steal > Self::STEAL_THRESHOLDS {
+                self.compact_file()?;
+            }
+        }
         Ok(())
     }
 
@@ -109,11 +146,15 @@ impl KvStore {
             .write(true)
             .create(true)
             .open(path)
-            .map_err(|io_error| FailToOpenFile { file_name: path.to_str().unwrap_or("unknown").to_owned(), io_error})?;
+            .map_err(|io_error| FailToOpenFile {
+                file_name: path.to_str().unwrap_or("unknown").to_owned(),
+                io_error,
+            })?;
         self.compact_file_to(&mut temp_file)?;
         std::fs::copy(path, &self.path)?;
         std::fs::remove_file(path)?;
         self.reopen_file()?;
+        self.steal = 0;
         Ok(())
     }
 
@@ -127,10 +168,14 @@ impl KvStore {
                 panic!("Failed in check consistency between in-memory index and disk file: the file has key {}, but the index has key {}.", command.key(), k.as_str());
             }
             let serialized = Self::serialize_command(&command);
-            self.index.insert(k.to_owned(), BinLocation{
-                offset: temp_file.seek(Current(0))? as usize, length: serialized.len()}
+            self.index.insert(
+                k.to_owned(),
+                BinLocation {
+                    offset: temp_file.seek(Current(0))? as usize,
+                    length: serialized.len(),
+                },
             );
-            temp_file.write(serialized.as_bytes())?;
+            temp_file.write_all(serialized.as_bytes())?;
         }
         temp_file.flush()?;
 
@@ -145,7 +190,7 @@ impl KvStore {
             .open(&self.path.join("kvs-db-data.txt"))
             .map_err(|e| KvError::FailToOpenFile {
                 file_name: String::from(self.path.to_str().unwrap_or("unknown")),
-                io_error: e
+                io_error: e,
             })?;
         Ok(())
     }
@@ -164,14 +209,15 @@ impl KvStore {
             .open(path.as_ref().join("kvs-db-data.json"))
             .map_err(|e| KvError::FailToOpenFile {
                 file_name: String::from(path.as_ref().to_str().unwrap_or("unknown")),
-                io_error: e
+                io_error: e,
             })?;
         let mut store = KvStore {
             file,
             path: Path::new(path.as_ref()).to_owned(),
-            index: HashMap::new()
+            index: HashMap::new(),
+            steal: 0,
         };
-        store.build_index()?;
+        store.steal = store.build_index()?;
         Ok(store)
     }
 
@@ -182,12 +228,14 @@ impl KvStore {
     /// when IO/serialize error happens during read data before the log, we will
     pub fn get(&mut self, key: String) -> Result<Option<String>> {
         let cache = self.index.get(key.as_str());
-        if cache.is_none() { return Ok(None); }
+        if cache.is_none() {
+            return Ok(None);
+        }
         let pos = *cache.unwrap();
         let cmd = self.load_command(pos)?;
         match cmd {
-            Rm {..} => Ok(None),
-            Put {value, ..} => Ok(Some(value))
+            Rm { .. } => Ok(None),
+            Put { value, .. } => Ok(Some(value)),
         }
     }
 
@@ -211,7 +259,7 @@ impl KvStore {
     /// when IO/serialize error happens during save the command into log, will throw error about them.
     pub fn remove(&mut self, key: String) -> Result<()> {
         if !self.index.contains_key(key.as_str()) {
-            return Err(KeyNotFound)
+            return Err(KeyNotFound);
         }
 
         let command = KvCommand::remove(key.clone());

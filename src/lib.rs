@@ -1,8 +1,5 @@
-#![feature(seek_convenience)]
-
 pub use self::errors::{KvError, Result};
 pub use self::kv::KvStore;
 
-mod kv;
 mod errors;
-
+mod kv;
