@@ -7,18 +7,31 @@ pub enum KvError {
     #[fail(display = "Failed to open file {} because error [{}].", file_name, io_error)]
     FailToOpenFile {
         file_name: String,
+        #[cause]
         io_error: std::io::Error
     },
-    #[fail(display = "Failed to append to file because error [{}].", io_error)]
-    FailToAppendFile {
-        io_error: std::io::Error
-    },
-    #[fail(display = "Failed to read file because error [{}]", io_error)]
-    FailToReadFile {
+    #[fail(display = "Failed because some unexpected IO exception [{}].", io_error)]
+    OtherIOException {
+        #[cause]
         io_error: std::io::Error
     },
     #[fail(display = "Failed to parse file because error [{}]", serde_error)]
     FailToParseFile {
+        #[cause]
         serde_error: serde_json::Error
+    },
+    #[fail(display = "key not found")]
+    KeyNotFound
+}
+
+impl From<serde_json::Error> for KvError {
+    fn from(err: serde_json::Error) -> Self {
+        KvError::FailToParseFile { serde_error: err }
+    }
+}
+
+impl From<std::io::Error> for KvError {
+    fn from(io_error: std::io::Error) -> Self {
+        KvError::OtherIOException { io_error }
     }
 }
