@@ -6,10 +6,13 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::errors::KvError::{FailToOpenFile, KeyNotFound};
-use crate::kv::KvCommand::{Put, Rm};
+use crate::engines::engine::KvsEngine;
 
-use super::{KvError, Result};
+use super::engine;
+use super::errors::{KvError, Result};
+use super::errors::KvError::{FailToOpenFile, KeyNotFound};
+
+use self::KvCommand::{Put, Rm};
 
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Clone, Copy)]
 struct BinLocation {
@@ -50,6 +53,57 @@ impl KvCommand {
         }
         .as_str()
     }
+}
+
+
+impl KvsEngine for KvStore {
+    /// get a value from the KvStore.
+    ///
+    /// # Error
+    ///
+    /// when IO/serialize error happens during read data before the log, we will
+    fn get(&mut self, key: String) -> Result<Option<String>> {
+        let cache = self.index.get(key.as_str());
+        if cache.is_none() {
+            return Ok(None);
+        }
+        let pos = *cache.unwrap();
+        let cmd = self.load_command(pos)?;
+        match cmd {
+            Rm { .. } => Ok(None),
+            Put { value, .. } => Ok(Some(value)),
+        }
+    }
+
+
+    /// Put a value into the KvStore.
+    /// This operation will be automatically persisted into the log file.
+    ///
+    /// # Error
+    ///
+    /// when IO/serialize error happens during save the command into log, will throw error about them.
+    fn set(&mut self, key: String, value: String) -> Result<()> {
+        let command = KvCommand::set(key.clone(), value);
+        self.save_command(command)?;
+        Ok(())
+    }
+
+    /// Remove an value from the KvStore
+    ///
+    /// # Error
+    ///
+    /// when the key isn't present, will throw `KeyNotFound`.
+    /// when IO/serialize error happens during save the command into log, will throw error about them.
+    fn remove(&mut self, key: String) -> Result<()> {
+        if !self.index.contains_key(key.as_str()) {
+            return Err(KeyNotFound);
+        }
+
+        let command = KvCommand::remove(key.clone());
+        self.save_command(command)?;
+        Ok(())
+    }
+
 }
 
 impl KvStore {
@@ -127,6 +181,7 @@ impl KvStore {
                 self.compact_file()?;
             }
         }
+        self.file.flush()?;
         Ok(())
     }
 
@@ -202,6 +257,8 @@ impl KvStore {
     /// If failed to open file, a `FailToOpenFile` will be thrown;
     /// During the process of building the index, we may face some deserialize/IO exception, which will also be thrown.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
+        engine::check_engine::<&P>(&path, "kvs")?;
+
         let file = OpenOptions::new()
             .create(true)
             .append(true)
@@ -220,50 +277,5 @@ impl KvStore {
         store.steal = store.build_index()?;
         Ok(store)
     }
-
-    /// get a value from the KvStore.
-    ///
-    /// # Error
-    ///
-    /// when IO/serialize error happens during read data before the log, we will
-    pub fn get(&mut self, key: String) -> Result<Option<String>> {
-        let cache = self.index.get(key.as_str());
-        if cache.is_none() {
-            return Ok(None);
-        }
-        let pos = *cache.unwrap();
-        let cmd = self.load_command(pos)?;
-        match cmd {
-            Rm { .. } => Ok(None),
-            Put { value, .. } => Ok(Some(value)),
-        }
-    }
-
-    /// Put a value into the KvStore.
-    /// This operation will be automatically persisted into the log file.
-    ///
-    /// # Error
-    ///
-    /// when IO/serialize error happens during save the command into log, will throw error about them.
-    pub fn set(&mut self, key: String, value: String) -> Result<()> {
-        let command = KvCommand::set(key.clone(), value);
-        self.save_command(command)?;
-        Ok(())
-    }
-
-    /// Remove an value from the KvStore
-    ///
-    /// # Error
-    ///
-    /// when the key isn't present, will throw `KeyNotFound`.
-    /// when IO/serialize error happens during save the command into log, will throw error about them.
-    pub fn remove(&mut self, key: String) -> Result<()> {
-        if !self.index.contains_key(key.as_str()) {
-            return Err(KeyNotFound);
-        }
-
-        let command = KvCommand::remove(key.clone());
-        self.save_command(command)?;
-        Ok(())
-    }
 }
+

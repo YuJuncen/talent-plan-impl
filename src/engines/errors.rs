@@ -26,8 +26,14 @@ pub enum KvError {
         #[cause]
         serde_error: serde_json::Error,
     },
-    #[fail(display = "key not found")]
+    #[fail(display = "Key not found")]
     KeyNotFound,
+    #[fail(display = "other exception: {}", reason)]
+    Other {
+        reason: String
+    },
+    #[fail(display = "illegal working directory: another instance is working here.")]
+    IllegalWorkingDirectory
 }
 
 impl From<serde_json::Error> for KvError {
