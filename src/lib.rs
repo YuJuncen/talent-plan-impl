@@ -1,5 +1,3 @@
-#![deny(missing_docs)]
-
 pub use engines::engine::KvsEngine;
 pub use engines::errors::{KvError, Result};
 pub use engines::kvs::KvStore;

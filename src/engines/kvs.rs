@@ -22,7 +22,8 @@ struct BinLocation {
 
 pub struct KvStore {
     index: HashMap<String, BinLocation>,
-    file: File,
+    reader: File,
+    writer: File,
     path: PathBuf,
     steal: usize,
 }
@@ -68,7 +69,7 @@ impl KvsEngine for KvStore {
             return Ok(None);
         }
         let pos = *cache.unwrap();
-        let cmd = self.load_command(pos)?;
+        let cmd = self.load_command((pos))?;
         match cmd {
             Rm { .. } => Ok(None),
             Put { value, .. } => Ok(Some(value)),
@@ -109,8 +110,8 @@ impl KvsEngine for KvStore {
 impl KvStore {
     /// build the in-memory index from file.
     fn build_index(&mut self) -> Result<usize> {
-        self.file.seek(SeekFrom::Start(0))?;
-        let mut reader = BufReader::new(&mut self.file);
+        self.reader.seek(SeekFrom::Start(0))?;
+        let mut reader = BufReader::new(&mut self.reader);
         let mut buf = String::new();
         let mut x;
         let mut steal = 0;
@@ -149,14 +150,15 @@ impl KvStore {
             }
             buf.clear();
         }
+
         Ok(steal)
     }
 
     /// load a command from one `BinLocation`.
     fn load_command(&mut self, location: BinLocation) -> Result<KvCommand> {
-        self.file.seek(SeekFrom::Start(location.offset as u64))?;
+        self.reader.seek(SeekFrom::Start(location.offset as u64))?;
         let mut buf = String::new();
-        let mut reader = BufReader::new(&mut self.file);
+        let mut reader = BufReader::new(&mut self.reader);
         reader.read_line(&mut buf)?;
         let result = serde_json::from_slice(buf.as_bytes())?;
         Ok(result)
@@ -165,8 +167,8 @@ impl KvStore {
     /// save a command into data file, and update the index.
     fn save_command(&mut self, command: KvCommand) -> Result<()> {
         let serialized = Self::serialize_command(&command);
-        let offset = self.file.seek(SeekFrom::Current(0))? as usize;
-        self.file.write_all(serialized.as_bytes())?;
+        let offset = self.writer.seek(SeekFrom::End(0))? as usize;
+        self.writer.write_all(serialized.as_bytes())?;
         let key = command.key().to_owned();
         let old = self.index.insert(
             key,
@@ -181,7 +183,7 @@ impl KvStore {
                 self.compact_file()?;
             }
         }
-        self.file.flush()?;
+        self.writer.flush()?;
         Ok(())
     }
 
@@ -206,7 +208,7 @@ impl KvStore {
                 io_error,
             })?;
         self.compact_file_to(&mut temp_file)?;
-        std::fs::copy(path, &self.path)?;
+        std::fs::copy(path, &self.path.join("kvs-db-data.json"))?;
         std::fs::remove_file(path)?;
         self.reopen_file()?;
         self.steal = 0;
@@ -239,10 +241,10 @@ impl KvStore {
 
     /// reopen the db file.
     fn reopen_file(&mut self) -> Result<()> {
-        self.file = OpenOptions::new()
+        self.writer = OpenOptions::new()
             .append(true)
             .read(true)
-            .open(&self.path.join("kvs-db-data.txt"))
+            .open(&self.path.join("kvs-db-data.json"))
             .map_err(|e| KvError::FailToOpenFile {
                 file_name: String::from(self.path.to_str().unwrap_or("unknown")),
                 io_error: e,
@@ -259,9 +261,15 @@ impl KvStore {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         engine::check_engine::<&P>(&path, "kvs")?;
 
-        let file = OpenOptions::new()
+        let writer = OpenOptions::new()
             .create(true)
             .append(true)
+            .open(path.as_ref().join("kvs-db-data.json"))
+            .map_err(|e| KvError::FailToOpenFile {
+                file_name: String::from(path.as_ref().to_str().unwrap_or("unknown")),
+                io_error: e,
+            })?;
+        let reader = OpenOptions::new()
             .read(true)
             .open(path.as_ref().join("kvs-db-data.json"))
             .map_err(|e| KvError::FailToOpenFile {
@@ -269,7 +277,8 @@ impl KvStore {
                 io_error: e,
             })?;
         let mut store = KvStore {
-            file,
+            reader,
+            writer,
             path: Path::new(path.as_ref()).to_owned(),
             index: HashMap::new(),
             steal: 0,

@@ -1,11 +1,10 @@
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::Path;
 
 use sled::Db;
 use sled::Error::Io;
 
 use crate::{KvError, KvsEngine};
-use crate::engines::errors::KvError::IllegalWorkingDirectory;
 
 use super::errors::Result;
 
