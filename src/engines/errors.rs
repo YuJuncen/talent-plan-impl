@@ -1,3 +1,5 @@
+use std::sync::PoisonError;
+
 use failure::Fail;
 
 pub type Result<T> = std::result::Result<T, KvError>;
@@ -33,7 +35,9 @@ pub enum KvError {
         reason: String
     },
     #[fail(display = "illegal working directory: another instance is working here.")]
-    IllegalWorkingDirectory
+    IllegalWorkingDirectory,
+    #[fail(display = "when operate with lock, something bad happens.")]
+    ConcurrentError
 }
 
 impl From<serde_json::Error> for KvError {
@@ -45,5 +49,11 @@ impl From<serde_json::Error> for KvError {
 impl From<std::io::Error> for KvError {
     fn from(io_error: std::io::Error) -> Self {
         KvError::OtherIOException { io_error }
+    }
+}
+
+impl<T> From<PoisonError<T>> for KvError {
+    fn from(_: PoisonError<T>) -> Self {
+        KvError::ConcurrentError
     }
 }

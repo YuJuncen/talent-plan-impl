@@ -1,6 +1,5 @@
 use std::net::SocketAddr;
 use std::path::Path;
-use std::process::exit;
 
 use failure::_core::str::FromStr;
 use failure::Fail;
@@ -56,12 +55,10 @@ impl FromStr for Engine {
     }
 }
 
-impl Engine {
-    fn get_instance(&self, p: impl AsRef<Path>) -> Box<dyn KvsEngine + Send> {
-        match self {
-            Engine::Kvs => Box::new(KvStore::open(p).unwrap()),
-            Engine::Sled => Box::new(SledEngine::open(p).unwrap())
-        }
+fn make_server(stream: TcpListener, engine: Engine, p: impl AsRef<Path>) -> Box<dyn Future<Item=(), Error=()> + Send> {
+    match engine {
+        Engine::Kvs => Box::new(make_task(stream, KvStore::open(p).unwrap())),
+        Engine::Sled => Box::new(make_task(stream, SledEngine::open(p).unwrap()))
     }
 }
 
@@ -82,21 +79,19 @@ impl From<kvs::KvError> for ServerError {
     }
 }
 
-fn main() -> std::io::Result<()> {
-    let opt : ServerOpt = ServerOpt::from_args();
-    stderrlog::new()
-        .verbosity(5)
-        .module(module_path!()).init().unwrap();
-    let stream = TcpListener::bind(&opt.addr)?;
-    let engine = opt.engine;
-    let mut engine = engine.get_instance(std::env::current_dir().unwrap());
-    let task = stream.incoming()
+extern "C"
+fn death_whisper() {
+    error!("kvs - {} - our server will shutdown.", env!("CARGO_PKG_VERSION"));
+}
+
+fn make_task<E: KvsEngine>(stream: TcpListener, engine: E) -> impl Future<Item=(), Error=()> {
+    stream.incoming()
         .and_then(|stream| {
             tokio::io::read_to_end(stream, vec![])
         })
-        .and_then(  move |stream| {
-            let ( sink, read) = stream;
-            let mut get_result = || {
+        .and_then(move |stream| {
+            let (sink, read) = stream;
+            let get_result = || {
                 let message = KvContractMessage::parse(read.as_slice()).map_err(|_| BadRequest)?;
                 info!("Received message: {:?}", message);
                 match message.to_request() {
@@ -133,14 +128,22 @@ fn main() -> std::io::Result<()> {
         })
         .map_err(|err| {
             error!("server internal io error: {:?}", err);
-            exit(1);
-        } );
-    info!("{} - server running on {}", env!("CARGO_PKG_VERSION"), opt.addr.to_string());
-    error!("kvs - {} - our data directory is {}.", env!("CARGO_PKG_VERSION"), std::env::current_dir().unwrap().to_str().unwrap());
-    let addr = opt.addr.clone();
-    ctrlc::set_handler(move || {
-        error!("{} - user keyboard interrupted. our server at {} will shutdown.", env!("CARGO_PKG_VERSION"), addr.to_string());
-    }).unwrap();
+            ()
+        })
+}
+
+fn main() -> std::io::Result<()> {
+    let opt : ServerOpt = ServerOpt::from_args();
+    stderrlog::new()
+        .verbosity(5)
+        .module(module_path!()).init().unwrap();
+    let stream = TcpListener::bind(&opt.addr)?;
+    let task = make_server(stream, opt.engine, std::env::current_dir().unwrap());
+    info!("kvs - {} - server running on {}", env!("CARGO_PKG_VERSION"), opt.addr.to_string());
+    info!("kvs - {} - our data directory is {}.", env!("CARGO_PKG_VERSION"), std::env::current_dir().unwrap().to_str().unwrap());
+    unsafe {
+        libc::atexit(death_whisper);
+    }
     tokio::run(task);
     Ok(())
 }

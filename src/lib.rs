@@ -6,3 +6,5 @@ pub use engines::kvs::KvStore;
 pub mod contract;
 /// About the KvEngine abstract.
 pub mod engines;
+/// The thread pools.
+pub mod threadpool;
