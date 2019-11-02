@@ -7,4 +7,10 @@ pub mod contract;
 /// About the KvEngine abstract.
 pub mod engines;
 /// The thread pools.
-pub mod threadpool;
+pub mod thread_pool;
+/// Common part of server.
+pub mod server_common;
+/// the default config of server.
+pub mod config;
+/// Common part of benchmarking.
+pub mod benchmark_common;

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::io::Read;
 
+use log::error;
 use serde::{Deserialize, Serialize};
 
 use super::{Error::MalformedBinary, Result};
@@ -114,7 +115,10 @@ impl KvContractMessage {
     ///
     /// if the binary format isn't right, throw `MalformedBinary`.
     pub fn parse(mut raw: (impl Read)) -> Result<Self> {
-        serde_json::from_reader(&mut raw).map_err(|_| MalformedBinary)
+        serde_json::from_reader(&mut raw).map_err(|err| {
+            error!(target: "app::error", "failed to parse request, exception: {}.", err);
+            MalformedBinary
+        })
     }
 
     /// serialize the message into binary from.

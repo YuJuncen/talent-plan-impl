@@ -4,7 +4,7 @@
 
 我曾经用 `actix` 和 `tokio` 半娱乐地做过一个小型的 `Rust`项目：我的博客后端，因此对 `Rust` 还算有些基础；我很喜欢这门有些奇特的语言——它有着非常深厚的命令式血脉、精致的内存管理、许多前沿的语言特性、用 `Prelude` 做常用模块的名字（`Haskell` 那一类语言经常这样干）……  
 
-## Log
+## Note
 
 ### project 1
 
@@ -46,5 +46,40 @@ sled                    time:   [1.5484 s 1.5963 s 1.6223 s]
 
 ## project 4
 
-我们遇到的第一个问题是 `Clone` 和 Trait Object 的关系，因为 Trait Object 使用和 `C++` 虚表不同的胖指针——如果某个 Trait 要求 `Self: Sized`，则我们无法将其封装为 Trait Object。
+我们现在需要用到两件重要的工具：
 
+- `Arc`，用来在线程之间共享内存。
+- `RwLock`、`Mutex`、`RefCell`，用来实现内部可变性。
+
+我们遇到的第一个问题是 `Clone` 和 Trait Object 的阻抗失配，因为 Trait Object 使用和 `C++` 虚表不同的胖指针——如果某个 Trait 要求 `Self: Sized`，则我们无法将其封装为 Trait Object。
+
+这个问题可以使用一定程度上的内联代码解决，或许写一个宏是更加好的解决方案，但是如今看起来，似乎也没啥必要。
+
+线程池的实现遇到的问题相对来讲不多；仅仅是“有些麻烦”——我们需要在 `Rust` 中模拟 `Erlang` 那般的消息传递机制（`Worker` 和 `Master` 的表现相当接近 `Erlang` 中的线程——接受消息，而后同步或者异步地返回），但是我们却仅有如同 `Go` 语言般的信道，二者虽然颇为相似，但是确实有些微妙的差别——因为并非每一个发送者都有一个 `Pid`，要模拟同步调用的话需要一些额外的抽象，大概长这样：
+
+```rust
+fn spawn<R>(&mut self, runnable: R) where
+	R: Send + 'static + FnOnce() {
+  // Here, we are creating the channel explicitly.
+	let (s, r) = unbounded();
+	self.pool.send(RunTask(Box::new(runable), 
+    // here, is the `sender` for synchronous call
+    s));
+  if let Err(_) = r.recv() {
+    panic!("Failed to start thread...");
+  }
+}
+```
+
+而在 `Erlang` 一类的 `Actor System` 中，创建信道的过程可以被省略，而后我们的代码可能长这样。
+
+```erlang
+poolSwpan(Pool, Task) ->
+	Pool ! [newtask, Task, self()],
+  receive 
+    ok -> ok;
+    [err, Message] -> [err, Message]
+ 	end.
+```
+
+不过就最终的接口来看，我们还是会将一切协议都封装起来的，所以反倒不是什么大事，仅仅是麻烦罢了。

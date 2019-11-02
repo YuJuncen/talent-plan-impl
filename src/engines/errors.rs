@@ -1,6 +1,7 @@
 use std::sync::PoisonError;
 
 use failure::Fail;
+use rayon::ThreadPoolBuildError;
 
 pub type Result<T> = std::result::Result<T, KvError>;
 
@@ -22,6 +23,11 @@ pub enum KvError {
     OtherIOException {
         #[cause]
         io_error: std::io::Error,
+    },
+    #[fail(display = "Failed to build an rayon thread pool: {}", error)]
+    RayonThreadPoolFailedToBuild {
+        #[cause]
+        error: ThreadPoolBuildError
     },
     #[fail(display = "Failed to parse file because error [{}]", serde_error)]
     FailToParseFile {
@@ -55,5 +61,13 @@ impl From<std::io::Error> for KvError {
 impl<T> From<PoisonError<T>> for KvError {
     fn from(_: PoisonError<T>) -> Self {
         KvError::ConcurrentError
+    }
+}
+
+impl From<ThreadPoolBuildError> for KvError {
+    fn from(error: ThreadPoolBuildError) -> Self {
+        KvError::RayonThreadPoolFailedToBuild {
+            error
+        }
     }
 }

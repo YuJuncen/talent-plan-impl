@@ -149,6 +149,7 @@ impl KvStore {
         let mut buf = String::new();
         let mut x;
         let mut steal = 0;
+        let mut idx = self.index.write()?;
         while {
             x = reader.read_line(&mut buf)?;
             x > 0
@@ -157,7 +158,7 @@ impl KvStore {
             match json {
                 KvCommand::Put { key: key_read, .. } => {
                     let offset = reader.seek(SeekFrom::Current(0))? as usize;
-                    let old = self.index.write()?.insert(
+                    let old = idx.insert(
                         key_read,
                         BinLocation {
                             offset: offset - x,
@@ -170,7 +171,7 @@ impl KvStore {
                 }
                 KvCommand::Rm { key: key_read } => {
                     let offset = reader.seek(SeekFrom::Current(0))? as usize;
-                    let old = self.index.write()?.insert(
+                    let old = idx.insert(
                         key_read,
                         BinLocation {
                             offset: offset - x,
@@ -202,8 +203,9 @@ impl KvStore {
     /// save a command into data file, and update the index.
     fn save_command(&self, command: KvCommand) -> Result<()> {
         let serialized = Self::serialize_command(&command);
-        let offset = self.writer.lock()?.seek(SeekFrom::End(0))? as usize;
-        self.writer.lock()?.write_all(serialized.as_bytes())?;
+        let mut writer = self.writer.lock()?;
+        let offset = writer.seek(SeekFrom::End(0))? as usize;
+        writer.write_all(serialized.as_bytes())?;
         let key = command.key().to_owned();
         let old = self.index.write()?.insert(
             key,
@@ -213,12 +215,16 @@ impl KvStore {
             },
         );
         if let Some(BinLocation { length, .. }) = old {
-            *self.steal.write()? += length;
-            if *self.steal.read()? > Self::STEAL_THRESHOLDS {
+            let mut steal = self.steal.write()?;
+            *steal += length;
+            if *steal > Self::STEAL_THRESHOLDS {
+                drop(steal);
+                drop(writer);
                 self.compact_file()?;
+                return Ok(());
             }
         }
-        self.writer.lock()?.flush()?;
+        writer.flush()?;
         Ok(())
     }
 
@@ -243,16 +249,25 @@ impl KvStore {
                 io_error,
             })?;
         self.compact_file_to(&mut temp_file)?;
+        let mut writer = self.writer.lock()?;
         std::fs::copy(path, &self.path.join("kvs-db-data.json"))?;
         std::fs::remove_file(path)?;
-        self.reopen_file()?;
+        *writer = OpenOptions::new()
+            .append(true)
+            .read(true)
+            .open(&self.path.join("kvs-db-data.json"))
+            .map_err(|e| KvError::FailToOpenFile {
+                file_name: String::from(self.path.to_str().unwrap_or("unknown")),
+                io_error: e,
+            })?;
         *self.steal.write()? = 0;
         Ok(())
     }
 
     /// write the compacted data file into an stream.
     fn compact_file_to(&self, temp_file: &mut (impl Write + Seek)) -> Result<()> {
-        let old_index = std::mem::replace(&mut *self.index.write()?, HashMap::new());
+        let mut idx = self.index.write()?;
+        let old_index = std::mem::replace(&mut *idx, HashMap::new());
         for (k, v) in old_index.iter() {
             // we deserialize the stream so that we are able to check consistency.
             let command = self.load_command(*v)?;
@@ -260,7 +275,7 @@ impl KvStore {
                 panic!("Failed in check consistency between in-memory index and disk file: the file has key {}, but the index has key {}.", command.key(), k.as_str());
             }
             let serialized = Self::serialize_command(&command);
-            self.index.write()?.insert(
+            idx.insert(
                 k.to_owned(),
                 BinLocation {
                     offset: temp_file.seek(Current(0))? as usize,
@@ -274,25 +289,13 @@ impl KvStore {
         Ok(())
     }
 
-    /// reopen the db file.
-    fn reopen_file(&self) -> Result<()> {
-        *self.writer.lock()? = OpenOptions::new()
-            .append(true)
-            .read(true)
-            .open(&self.path.join("kvs-db-data.json"))
-            .map_err(|e| KvError::FailToOpenFile {
-                file_name: String::from(self.path.to_str().unwrap_or("unknown")),
-                io_error: e,
-            })?;
-        Ok(())
-    }
-
     /// make an KvStore by an database file.
     ///
     /// # Error
     ///
     /// If failed to open file, a `FailToOpenFile` will be thrown;
-    /// During the process of building the index, we may face some deserialize/IO exception, which will also be thrown.
+    /// During the process of building the index, we may meet some deserialize/IO exception, which will also be thrown,
+    /// sealed in the `OtherIOException` variant.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         engine::check_engine::<&P>(&path, "kvs")?;
 
@@ -312,7 +315,7 @@ impl KvStore {
                 file_name: String::from(path.as_ref().to_str().unwrap_or("unknown")),
                 io_error: e,
                 })?,
-            root: path.as_ref().to_owned()
+            root: path.as_ref().join("kvs-db-data.json").to_owned()
         };
         let mut store = KvStore {
             reader: RefCell::new(reader),

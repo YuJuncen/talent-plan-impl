@@ -15,17 +15,18 @@ walkdir = "2.2.7"
 serde = "*"
 serde_json = "*"
 failure = "*"
-tokio = "0.1"
 log = "0.4.8"
-stderrlog = "0.4"
-ctrlc = "3.1.3"
 sled = "*"
-env_logger = "*"
-libc = "*"
+log4rs = "0.8"
+log-mdc = "0.1"
+crossbeam-channel = "0.3"
+crossbeam-utils = "*"
+panic-control = "*"
+rayon = "1.2"
+rand = "*"
 
 [dev-dependencies]
 criterion = "0.3"
-rand = "*"
 
 [lib]
 name = "kvs"
@@ -39,7 +40,7 @@ test = false
 
 [[bin]]
 name = "kvs-server"
-path = "src/bin/server.rs"
+path = "src/bin/threaded_server.rs"
 test = false
 
 [[bench]]

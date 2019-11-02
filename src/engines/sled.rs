@@ -1,4 +1,3 @@
-use std::io::Read;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
 
@@ -43,27 +42,28 @@ impl SledEngine {
 
 impl KvsEngine for SledEngine {
     fn get(&self, key: String) -> Result<Option<String>> {
-        let result = self.db.read().unwrap().get(key)?;
-        if let Some(v) = result {
+        let db = self.db.read()?;
+        if let Some(v) = db.get(key)? {
             return Ok(Some(String::from_utf8(v.to_owned().to_vec())
                 .map_err(|utf8_error| KvError::Other
                     {reason: format!("decode from sled binary failed since: {}", utf8_error)})?));
         }
-        self.db.write()?.flush()?;
+        db.flush()?;
         Ok(None)
     }
 
     fn set(&self, key: String, value: String) -> Result<()> {
-        self.db.write().unwrap().insert(key, value.as_str())?;
+        self.db.write()?.insert(key, value.as_str())?;
         Ok(())
     }
 
     fn remove(&self, key: String) -> Result<()> {
-        let result = match self.db.write().unwrap().remove(key)? {
+        let db = self.db.write()?;
+        let result = match db.remove(key)? {
             None => Err(KvError::KeyNotFound),
             Some(_) => Ok(())
         };
-        self.db.write()?.flush()?;
+        db.flush()?;
         result
     }
 }
