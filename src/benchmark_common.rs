@@ -84,11 +84,13 @@ impl RemoteEngine {
         }
     }
 
-    pub fn spawn_new(addr: SocketAddr, engine: Engine, pool: Pool) -> Self {
+    pub fn spawn_new(addr: Option<SocketAddr>, engine: Engine, pool: Pool) -> Self {
+        let addr = addr.unwrap_or("127.0.0.1:4000".parse().unwrap());
         std::process::Command::cargo_bin("kvs-server")
             .unwrap()
             .args(&["--engine", engine.as_ref(), "--pool", pool.as_ref(), "--addr", addr.to_string().as_str()])
-            .spawn();
+            .spawn()
+            .unwrap();
         RemoteEngine { remote: addr }
     }
 }
@@ -97,13 +99,14 @@ impl KvsEngine for RemoteEngine {
     fn get(&self, key: String) -> Result<Option<String>, KvError> {
         let x = std::process::Command::cargo_bin("kvs-client")
             .unwrap()
-            .args(&["--addr", format!("{}", self.remote).as_str()])
+            .args(&["get", "--addr", format!("{}", self.remote).as_str(), key.as_str()])
             .output()?;
-        let result = String::from_utf8(x.stdout)
+        let mut result = String::from_utf8(x.stdout)
             .map_err(|err| KvError::Other { reason: format!("{}", err) })?;
         if result == "Key not found\n" {
             Ok(None)
         } else {
+            result.pop();
             Ok(Some(result))
         }
     }
@@ -111,7 +114,7 @@ impl KvsEngine for RemoteEngine {
     fn set(&self, key: String, value: String) -> Result<(), KvError> {
         let x = std::process::Command::cargo_bin("kvs-client")
             .unwrap()
-            .args(&["--addr", format!("{}", self.remote).as_str(), "set", key.as_str(), value.as_str()])
+            .args(&["set", "--addr", format!("{}", self.remote).as_str(), key.as_str(), value.as_str()])
             .output()?;
         if x.status.success() {
             Ok(())
@@ -123,7 +126,7 @@ impl KvsEngine for RemoteEngine {
     fn remove(&self, key: String) -> Result<(), KvError> {
         let output = std::process::Command::cargo_bin("kvs-client")
             .unwrap()
-            .args(&["--addr", format!("{}", self.remote).as_str(), "rm", key.as_str()])
+            .args(&["rm", "--addr", format!("{}", self.remote).as_str(), key.as_str()])
             .output()?;
         if output.status.success() {
             Ok(())
@@ -133,9 +136,9 @@ impl KvsEngine for RemoteEngine {
     }
 }
 
-pub fn insert_keys(store: impl KvsEngine, pool: &impl ThreadPool, key_size: usize, key_range: (usize, usize))
+pub fn insert_keys(store: impl KvsEngine, pool: &impl ThreadPool, key_size: usize)
                    -> Arc<RwLock<HashSet<usize>>> {
-    let mut keys = Arc::new(RwLock::new(HashSet::new()));
+    let keys = Arc::new(RwLock::new(HashSet::new()));
     let wg: WaitGroup = WaitGroup::new();
     for i in 0..key_size {
         pool.spawn({
@@ -143,7 +146,7 @@ pub fn insert_keys(store: impl KvsEngine, pool: &impl ThreadPool, key_size: usiz
             let store = store.clone();
             let keys = keys.clone();
             move || {
-                let v = thread_rng().gen_range(key_range.0, key_range.1);
+                let v = i;
                 keys.write().unwrap().insert(v);
                 store.set(format!("Key{}", v), format!("Value{}", v)).unwrap();
                 drop(wg);
@@ -155,20 +158,25 @@ pub fn insert_keys(store: impl KvsEngine, pool: &impl ThreadPool, key_size: usiz
 }
 
 pub fn read_exist(store: impl KvsEngine, pool: &impl ThreadPool, times: usize, keys: Arc<RwLock<HashSet<usize>>>) {
-    let promises: Vec<Promise<_>> = (0..times).map(|_| Promise::new()).collect();
-    for i in 0..times {
-        let promise = promises[i].clone();
+    let wg = WaitGroup::new();
+    let success = Arc::new(Mutex::new(true));
+    for _ in 0..times {
         let keys = keys.clone();
         let store = store.clone();
+        let success = success.clone();
+        let wg = wg.clone();
         pool.spawn(move || {
             let guard = keys.read().unwrap();
             let k = guard.iter().choose(&mut thread_rng()).unwrap();
             let v = store.get(format!("Key{}", *k)).unwrap().unwrap();
-            promise.fulfill(v);
+            if v != format!("Value{}", k) {
+                let mut l = success.lock().unwrap();
+                *l = false;
+            }
+            drop(wg);
         })
     }
-    assert!(promises.iter().all(|promise| {
-        let k = promise.get();
-        k == format!("Value{}", k[3..].to_owned())
-    }));
+    wg.wait();
+    let l = success.lock().unwrap();
+    assert!(*l);
 }

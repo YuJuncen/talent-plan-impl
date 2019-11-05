@@ -54,10 +54,3 @@ fn benchmark_sled(c: &mut Criterion) {
         b.iter(|| benchmark(&mut sled));
     });
 }
-
-criterion_group! {
-    name = benches;
-    config = Criterion::default().sample_size(10);
-    targets = benchmark_kvs, benchmark_sled
-}
-criterion_main!(benches);

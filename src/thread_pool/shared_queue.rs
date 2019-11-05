@@ -292,7 +292,6 @@ impl WorkerBroker {
                         master2.send(MasterMessage::Panicked).unwrap();
                     }
                 }
-                ;
                 // 这儿我们可以放心地让这个线程 Panic。
                 loop {
                     let message = r.recv().unwrap();

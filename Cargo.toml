@@ -44,5 +44,5 @@ path = "src/bin/threaded_server.rs"
 test = false
 
 [[bench]]
-name = "kv_benchmark"
+name = "threaded_kv_benchmark"
 harness = false

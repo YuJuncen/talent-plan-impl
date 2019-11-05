@@ -96,9 +96,10 @@ fn main() -> Result<()> {
     let opt: ServerOpt = ServerOpt::from_args();
     let addr = opt.addr;
     let path = std::env::current_dir().unwrap();
-    log4rs::init_config(kvs::config::log4rs::config()).expect("unable to init logger.");
+    //log4rs::init_config(kvs::config::log4rs::config()).expect("unable to init logger.");
     error!(target: "app::error", "=== app::error === [kvs version {}, listen on {}]", env!("CARGO_PKG_VERSION"), addr);
     info!(target: "app::request", "=== app::request === [kvs version {}, listen on {}]", env!("CARGO_PKG_VERSION"), addr);
+    info!("config: {:?}", opt);
     match opt.engine {
         Engine::Kvs => {
             let server = Server::new(
