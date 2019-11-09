@@ -1,15 +1,12 @@
 use std::cell::RefCell;
 use std::collections::hash_map::RandomState;
-use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
-use std::io::SeekFrom::Current;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
 
 use atomic::Atomic;
 use concurrent_hashmap::ConcHashMap;
-use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 
 use crate::common::SeekExt;
@@ -119,7 +116,6 @@ impl KvReader {
         let mut buf = String::new();
         let mut reader = BufReader::new(f);
         reader.read_line(&mut buf)?;
-        reader.into_inner().unlock()?;
         let result = serde_json::from_slice(buf.as_bytes())?;
         Ok(result)
     }
@@ -224,8 +220,8 @@ impl KvStore {
         let mut reader = BufReader::new(inner.by_ref());
         let mut buf = String::new();
         let mut x;
-        let mut steal = 0;
-        let idx = &self.index;
+        let steal = 0;
+        let _idx = &self.index;
         while {
             x = reader.read_line(&mut buf)?;
             x > 0
@@ -235,13 +231,13 @@ impl KvStore {
                 KvCommand::Put { key: key_read, .. } => {
                     let offset = reader.current_position()?;
                     if let Some(n) = self.override_record(key_read.as_str(), bin_loc! {Gen[1] offset - x => x }) {
-                        self.add_steal(n);
+                        self.add_steal(n)?;
                     };
                 }
                 KvCommand::Rm { key: key_read } => {
                     let offset = reader.current_position()?;
                     if let Some(n) = self.override_record(key_read.as_str(), bin_loc! {Gen[1] offset - x => x }) {
-                        self.add_steal(n);
+                        self.add_steal(n)?;
                     };
                 }
             }

@@ -1,4 +1,4 @@
-use std::io::{Error, Seek, SeekFrom};
+use std::io::{Seek, SeekFrom};
 
 pub(crate) trait SeekExt {
     fn current_position(&mut self) -> std::io::Result<usize>;

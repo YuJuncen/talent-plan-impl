@@ -1,7 +1,6 @@
-use std::io::{Cursor, Seek, SeekFrom};
+use std::io::{Seek, SeekFrom};
 
 use serde::{Deserialize, Serialize};
-use serde_json::Deserializer;
 
 #[derive(Serialize, Debug, Deserialize, Clone)]
 struct Simple {
