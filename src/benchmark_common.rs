@@ -1,16 +1,13 @@
 use std::collections::HashSet;
 use std::net::SocketAddr;
-use std::process::Command;
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 
-use assert_cmd::cargo::cargo_bin;
 use assert_cmd::prelude::CommandCargoExt;
 use crossbeam_utils::sync::WaitGroup;
-use rand::{Rng, thread_rng};
+use rand::thread_rng;
 use rand::prelude::IteratorRandom;
 
 use crate::{KvError, KvsEngine};
-use crate::engines::errors::KvError::Other;
 use crate::server_common::{Engine, Pool};
 use crate::thread_pool::ThreadPool;
 

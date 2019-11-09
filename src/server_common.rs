@@ -6,7 +6,6 @@ use structopt::StructOpt;
 
 use crate::KvError;
 use crate::server_common::ServerError::{EngineError, UnsupportedContract};
-use crate::thread_pool::SharedQueueThreadPool;
 
 #[derive(Debug, StructOpt, Clone)]
 #[structopt(name = "kvs",

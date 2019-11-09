@@ -91,29 +91,66 @@ impl<E, P> Server<E, P> where
     }
 }
 
+macro_rules! with_engine {
+    ($engine: expr, $path: expr, |$name: ident| $block: block) => {{
+        use kvs::server_common::Result;
+        match $engine {
+            Engine::Kvs => {
+                let $name = KvStore::open($path)?;
+                let result : Result<()> = $block;
+                result
+            },
+            Engine::Sled => {
+                let $name = SledEngine::open($path)?;
+                let result : Result<()> = $block;
+                result
+            }
+        }?;
+        Result::Ok(())
+   }};
+}
+
+macro_rules! with_pool {
+    ($pool: expr, $n: expr, |$name: ident| $block: block) => {{
+         use kvs::server_common::Result;
+         match $pool {
+            Pool::Rayon => {
+                let $name = RayonThreadPool::new($n)?;
+                let result: Result<()> = $block;
+                result
+            },
+            Pool::SharedQueue => {
+                let $name = SharedQueueThreadPool::new($n)?;
+                let result: Result<()> = $block;
+                result
+            },
+            Pool::Naive => {
+                let $name = NaiveThreadPool::new($n)?;
+                let result: Result<()> = $block;
+                result
+            }
+        }?;
+        Result::Ok(())
+    }};
+}
 
 fn main() -> Result<()> {
     let opt: ServerOpt = ServerOpt::from_args();
     let addr = opt.addr;
     let path = std::env::current_dir().unwrap();
-    //log4rs::init_config(kvs::config::log4rs::config()).expect("unable to init logger.");
+    if !std::env::var("KV_DISABLE_LOG").is_ok() {
+        log4rs::init_config(kvs::config::log4rs::config()).expect("unable to init logger.");
+    }
     error!(target: "app::error", "=== app::error === [kvs version {}, listen on {}]", env!("CARGO_PKG_VERSION"), addr);
     info!(target: "app::request", "=== app::request === [kvs version {}, listen on {}]", env!("CARGO_PKG_VERSION"), addr);
     info!("config: {:?}", opt);
-    match opt.engine {
-        Engine::Kvs => {
-            let server = Server::new(
-                KvStore::open(&path)?,
-                SharedQueueThreadPool::new(4)?);
-            server.listen_on(addr.clone());
-        }
-        Engine::Sled => {
-            let server = Server::new(
-                SledEngine::open(&path)?,
-                SharedQueueThreadPool::new(4)?);
-            server.listen_on(addr.clone());
-        }
-    };
+    with_pool!(opt.pool, num_cpus::get(), |pool| {
+        with_engine!(opt.engine, path, |engine| {
+            let server = Server::new(engine, pool);
+            server.listen_on(addr);
+            Ok(())
+        })
+    })?;
     info!("goodbye.");
     Ok(())
 }

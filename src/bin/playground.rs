@@ -1,22 +1,27 @@
-use std::net::SocketAddr;
+use std::io::{Cursor, Seek, SeekFrom};
 
-use assert_cmd::prelude::CommandCargoExt;
-use log::{error, info};
-use tempfile::TempDir;
+use serde::{Deserialize, Serialize};
+use serde_json::Deserializer;
 
-use kvs::{KvsEngine, Result};
-use kvs::benchmark_common::Promise;
-use kvs::server_common::{Engine, Pool};
+#[derive(Serialize, Debug, Deserialize, Clone)]
+struct Simple {
+    foo: i32,
+    bar: String,
+}
 
-fn main() -> Result<()> {
-    let temp = tempfile::tempdir().unwrap();
-    std::env::set_current_dir(temp.path()).unwrap();
-    log4rs::init_config(kvs::config::log4rs::config()).unwrap();
-    let fut = Promise::new();
-    let send = fut.clone();
-    std::thread::spawn(move || {
-        send.fulfill(1);
-    });
-    println!("{:?}", fut.get());
-    Ok(())
+struct SharedReader {}
+
+trait SeekExt {
+    fn current_position(&mut self) -> std::io::Result<usize>;
+}
+
+impl<R: Seek> SeekExt for R {
+    fn current_position(&mut self) -> std::io::Result<usize> {
+        self.seek(SeekFrom::Current(0))
+            .map(|n| n as usize)
+    }
+}
+
+fn main() {
+
 }

@@ -24,6 +24,9 @@ crossbeam-utils = "*"
 panic-control = "*"
 rayon = "1.2"
 rand = "*"
+num_cpus = "1.11.0"
+concurrent-hashmap = "0.2"
+atomic = "0.4"
 
 [dev-dependencies]
 criterion = "0.3"

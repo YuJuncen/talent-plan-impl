@@ -14,3 +14,4 @@ pub mod server_common;
 pub mod config;
 /// Common part of benchmarking.
 pub mod benchmark_common;
+mod common;
