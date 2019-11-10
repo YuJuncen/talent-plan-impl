@@ -4,8 +4,8 @@ use std::sync::{Arc, Condvar, Mutex, RwLock};
 
 use assert_cmd::prelude::CommandCargoExt;
 use crossbeam_utils::sync::WaitGroup;
-use rand::thread_rng;
 use rand::prelude::IteratorRandom;
+use rand::thread_rng;
 
 use crate::{KvError, KvsEngine};
 use crate::server_common::{Engine, Pool};
@@ -33,7 +33,7 @@ impl<T> Promise<T> {
     /// Fulfill an Promise.
     ///
     /// # Example
-    /// ```rust
+    /// ```no-run
     /// # use std::thread;
     /// # use kvs::benchmark_common::Promise;
     /// let promise = Promise::new();
