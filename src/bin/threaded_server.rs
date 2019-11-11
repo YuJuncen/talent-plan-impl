@@ -69,7 +69,8 @@ impl<E, P> Server<E, P>
                 let engine = self.engine.clone();
                 move || {
                     let stream = stream.unwrap();
-                    let peer_addr = stream.peer_addr().map(|addr| format!("{}", addr)).unwrap_or("UNKNOWN".to_owned());
+                    let peer_addr = stream.peer_addr().map(|addr| format!("{}", addr))
+                        .unwrap_or_else(|_| "UNKNOWN".to_owned());
                     match Self::handle_request(stream, engine) {
                         Ok(_) => (),
                         Err(err) => error!(target: "app::error", "An error: {} occurs during processing... with peer: {}", err, peer_addr)
@@ -136,7 +137,7 @@ fn main() -> Result<()> {
     let opt: ServerOpt = ServerOpt::from_args();
     let addr = opt.addr;
     let path = std::env::current_dir().unwrap();
-    if !std::env::var("KV_DISABLE_LOG").is_ok() {
+    if std::env::var("KV_DISABLE_LOG").is_err() {
         log4rs::init_config(kvs::config::log4rs::config()).expect("unable to init logger.");
     }
     error!(target: "app::error", "=== app::error === [kvs version {}, listen on {}]", env!("CARGO_PKG_VERSION"), addr);
