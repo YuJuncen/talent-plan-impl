@@ -10,7 +10,34 @@
 
 它抽象了存储引擎，所以可以运行在多个底层实现上。
 
-## 笔记
+### 快速上手
+这个项目提供两个控制台接口： `kvs-server ` 和  `kvs-client` ，其用途恰如其名。
+#### 服务端
+
+在项目中，可以使用 `cargo` 直接运行：
+
+```bash
+# to start server
+cargo run --bin kvs-server
+```
+这个命令会用默认的 `kvs` 引擎来启动  `kvs-server` ，跑在默认的 `localhost:4000` 上。
+
+你可以使用 `--help` 命令了解更多。
+
+#### 客户端
+```bash
+# to get value of $KEY_NAME.
+cargo run --bin kvs-client -- get $KEY_NAME
+# to set key $KEY_NAME as $KEY_VALUE.
+cargo run --bin kvs-client -- set $KEY_NAME $VALUE
+# to remove key $KEY_NAME.
+cargo run --bin kvs-client -- rm $KEY_NAME
+```
+以上所有操作都会试着连接默认的服务器地址 `localhost:4000`。
+
+你可以使用 `--help` 命令了解更多。
+
+## 实现时的笔记
 
 ### project 1
 
@@ -70,7 +97,7 @@ fn spawn<R>(&mut self, runnable: R) where
 	R: Send + 'static + FnOnce() {
   // Here, we are creating the channel explicitly.
 	let (s, r) = unbounded();
-	self.pool.send(RunTask(Box::new(runable), 
+	self.pool.send(RunTask(Box::new(runnable), 
     // here, is the `sender` for synchronous call
     s));
   if let Err(_) = r.recv() {
@@ -124,7 +151,9 @@ poolSwpan(Pool, Task) ->
 
 读者释放锁的时机也值得考虑：如果读者在读文件之前就将锁释放了，那么写入在保证一致性的前提下可以等待更加短的时间；但是删除文件的时候却又会造成额外的风险；`epoch` 选择为每一个线程加上一个 `active` 位，我们用一种更加暴力的方法：“物化”一组 `RWLock`，让每一次读为那一代文件加上一个共享锁。而**仅仅**在删除的时候，我们会尝试获得那个文件上的排他锁。
 
-另一种可能的办法是，延迟删除文件，在 `Reader`群中维护一个 `Map<u64, Atomic<u64>>` 的计数器，每次在尝试读的时候，都主动放弃已经过时的文件，此时需要额外的方式来追踪什么样的值是“过时”的；在这里，我们叫他 `tail_epoch`。
+另一种可能的办法是，延迟删除文件，在 `Reader`群中维护一个 `Map<u64, Atomic<u64>>` 的引用计数器，用来标记每条线程到各个时代的引用，每次在尝试读的时候，都主动放弃已经过时的文件，降低引用计数器，如果其值为`0`，那么我们便可以删除之，此时需要额外的方式来确定何时值是“过时”的；此处定义 `tail_epoch`，这个值由 `compact_file` 所衍生的线程增长，我们能够保证，`epoch` 小于这个值的文件绝不存在于索引內。
+
+> 后来我发现这个方法不太可行，因为如果 `Reader` 被直接 `drop` 了，我们会遇到一些棘手的问题……于是我们仍旧选择在读的时候获取“物化”的 `RwLock` 的读锁。进入这个锁会有额外的开销……或许会有更加好的办法……吗？
 
 我们需要在 `BinLocation` 中增加一个新字段——`epoch`，表示文件所在的纪元。同时需要维护一个变量`current_epoch`，用来帮助写者创建下一个纪元的文件。这个字段可能会在 `create_index` 中被初始化。读者可能不需要这个标志，但是写者可能需要。
 
