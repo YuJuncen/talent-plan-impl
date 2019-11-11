@@ -51,9 +51,7 @@ struct WorkerBroker(Sender<WorkerMessage>);
 #[derive(Debug, Clone, Eq, PartialEq, Copy)]
 enum PoolState {
     Running,
-    Terminating {
-        ended_workers: usize
-    },
+    Terminating { ended_workers: usize },
     GracefulShutdown,
 }
 
@@ -63,21 +61,21 @@ impl PoolState {
             PoolState::Terminating { ended_workers } => {
                 *ended_workers += 1;
             }
-            _ => panic!("Fetal: incr_ended_workers on illegal state.")
+            _ => panic!("Fetal: incr_ended_workers on illegal state."),
         }
     }
 
     fn get_ended_workers(&self) -> usize {
         match self {
             PoolState::Terminating { ended_workers } => *ended_workers,
-            _ => panic!("Fetal: incr_ended_workers on illegal state.")
+            _ => panic!("Fetal: incr_ended_workers on illegal state."),
         }
     }
 
     fn is_terminating(&self) -> bool {
         match self {
             PoolState::Terminating { .. } | PoolState::GracefulShutdown => true,
-            _ => false
+            _ => false,
         }
     }
 }
@@ -125,9 +123,13 @@ impl Drop for SharedQueueThreadPool {
 }
 
 impl ThreadPool for SharedQueueThreadPool {
-    fn spawn<R>(&self, runnable: R) where
-        R: 'static + Send + FnOnce() {
-        self.0.send(MasterMessage::NewTask(Box::new(runnable))).unwrap();
+    fn spawn<R>(&self, runnable: R)
+        where
+            R: 'static + Send + FnOnce(),
+    {
+        self.0
+            .send(MasterMessage::NewTask(Box::new(runnable)))
+            .unwrap();
     }
 
     fn new(size: usize) -> Result<Self> {
@@ -154,13 +156,16 @@ impl ThreadMaster {
 
     fn start_work(mut self) -> SharedQueueThreadPool {
         let (this, mail_box) = unbounded();
-        (0..self.pool_size).for_each(|_| { self.idle_workers.push_back(WorkerBroker::new(this.clone())) });
+        (0..self.pool_size)
+            .for_each(|_| self.idle_workers.push_back(WorkerBroker::new(this.clone())));
         let this2 = this.clone();
         thread::Builder::new()
             .name("shared-queue-thread-pool-master".to_owned())
             .spawn(move || {
                 for message in mail_box.iter() {
-                    if !self.handle_message(message, this2.clone()) { break; }
+                    if !self.handle_message(message, this2.clone()) {
+                        break;
+                    }
                 }
             })
             .unwrap();
@@ -178,27 +183,26 @@ impl ThreadMaster {
                 }
                 self.new_task(task)
             }
-            TaskDone(broker) => {
-                match self.state {
-                    PoolState::GracefulShutdown => {
-                        self.new_broker(broker);
-                        if self.waiting.is_empty() {
-                            this.send(MasterMessage::Terminate(self.terminate_hook.take().unwrap())).unwrap();
-                        }
-                    }
-                    PoolState::Terminating { .. } => {
-                        broker.unsafe_terminate();
-                        self.state.incr_ended_workers();
-                        if self.state.get_ended_workers() == self.pool_size {
-                            self.send_terminate();
-                            return true;
-                        }
-                    }
-                    PoolState::Running => {
-                        self.new_broker(broker)
+            TaskDone(broker) => match self.state {
+                PoolState::GracefulShutdown => {
+                    self.new_broker(broker);
+                    if self.waiting.is_empty() {
+                        this.send(MasterMessage::Terminate(
+                            self.terminate_hook.take().unwrap(),
+                        ))
+                            .unwrap();
                     }
                 }
-            }
+                PoolState::Terminating { .. } => {
+                    broker.unsafe_terminate();
+                    self.state.incr_ended_workers();
+                    if self.state.get_ended_workers() == self.pool_size {
+                        self.send_terminate();
+                        return true;
+                    }
+                }
+                PoolState::Running => self.new_broker(broker),
+            },
             Terminate(ret) => {
                 // 让这个操作成为幂等的，防止意外的状态转移。
                 if let PoolState::Terminating { .. } = self.state {
@@ -228,7 +232,10 @@ impl ThreadMaster {
                             let broker = WorkerBroker::new(this.clone());
                             self.new_broker(broker);
                             if self.waiting.is_empty() {
-                                this.send(MasterMessage::Terminate(self.terminate_hook.take().unwrap())).unwrap();
+                                this.send(MasterMessage::Terminate(
+                                    self.terminate_hook.take().unwrap(),
+                                ))
+                                    .unwrap();
                             }
                         }
                         PoolState::Terminating { .. } => {
@@ -238,7 +245,7 @@ impl ThreadMaster {
                                 return true;
                             }
                         }
-                        _ => unreachable!()
+                        _ => unreachable!(),
                     }
                 }
             }
@@ -251,16 +258,18 @@ impl ThreadMaster {
                 self.terminate_hook = Some(ret);
 
                 if self.waiting.is_empty() {
-                    this.send(MasterMessage::Terminate(self.terminate_hook.take().unwrap())).unwrap();
+                    this.send(MasterMessage::Terminate(
+                        self.terminate_hook.take().unwrap(),
+                    ))
+                        .unwrap();
                 }
             }
         }
         true
     }
 
-
     #[inline]
-    fn new_task(&mut self, task: Task) -> () {
+    fn new_task(&mut self, task: Task) {
         if let Some(worker) = self.idle_workers.pop_front() {
             worker.unsafe_send_task(task);
         } else {
@@ -300,7 +309,7 @@ impl WorkerBroker {
                             task();
                             master.send(TaskDone(abroad_worker.clone())).unwrap();
                         }
-                        WorkerMessage::Terminate => break
+                        WorkerMessage::Terminate => break,
                     };
                 }
             })

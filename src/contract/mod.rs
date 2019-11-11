@@ -1,5 +1,5 @@
-pub use contract::{KvContractMessage, Request, Response};
 pub use errors::{Error, Result};
+pub use message::{KvContractMessage, Request, Response};
 
-mod contract;
 mod errors;
+mod message;

@@ -18,9 +18,11 @@ struct Server<E, P> {
     pool: P,
 }
 
-impl<E, P> Server<E, P> where
-    E: KvsEngine,
-    P: ThreadPool {
+impl<E, P> Server<E, P>
+    where
+        E: KvsEngine,
+        P: ThreadPool,
+{
     fn new(engine: E, pool: P) -> Self {
         Server { engine, pool }
     }
@@ -30,7 +32,7 @@ impl<E, P> Server<E, P> where
         let message = KvContractMessage::parse(&mut stream)?;
         let request = match message.to_request() {
             Some(request) => request,
-            None => return Err(BadRequest)
+            None => return Err(BadRequest),
         };
         info!(target: "app::request", "handling request {:?}.", &request);
         let result = Self::query_db(request, engine)?;
@@ -45,21 +47,17 @@ impl<E, P> Server<E, P> where
                 let queried = engine.get(key.to_owned())?;
                 match queried {
                     Some(value) => Ok(KvContractMessage::response_content(value)),
-                    None => Ok(KvContractMessage::response_no_content())
+                    None => Ok(KvContractMessage::response_no_content()),
                 }
             }
-            Request::Set { key, value } => {
-                match engine.set(key.to_owned(), value.to_owned()) {
-                    Ok(()) => Ok(KvContractMessage::response_no_content()),
-                    Err(err) => Ok(KvContractMessage::response_err(format!("{}", err)))
-                }
-            }
-            Request::Remove { key } => {
-                match engine.remove(key.to_owned()) {
-                    Ok(()) => Ok(KvContractMessage::response_no_content()),
-                    Err(err) => Ok(KvContractMessage::response_err(format!("{}", err)))
-                }
-            }
+            Request::Set { key, value } => match engine.set(key.to_owned(), value.to_owned()) {
+                Ok(()) => Ok(KvContractMessage::response_no_content()),
+                Err(err) => Ok(KvContractMessage::response_err(format!("{}", err))),
+            },
+            Request::Remove { key } => match engine.remove(key.to_owned()) {
+                Ok(()) => Ok(KvContractMessage::response_no_content()),
+                Err(err) => Ok(KvContractMessage::response_err(format!("{}", err))),
+            },
         }
     }
 
@@ -86,7 +84,7 @@ impl<E, P> Server<E, P> where
         info!("Our server will on: {}", addr);
         match self.do_listen_on(addr.clone()) {
             Err(err) => error!(target: "app::error", "err:{}; Our server on {} will stop...", err, addr),
-            Ok(_) => info!("goodbye!")
+            Ok(_) => info!("goodbye!"),
         }
     }
 }
@@ -97,33 +95,33 @@ macro_rules! with_engine {
         match $engine {
             Engine::Kvs => {
                 let $name = KvStore::open($path)?;
-                let result : Result<()> = $block;
+                let result: Result<()> = $block;
                 result
-            },
+            }
             Engine::Sled => {
                 let $name = SledEngine::open($path)?;
-                let result : Result<()> = $block;
+                let result: Result<()> = $block;
                 result
             }
         }?;
         Result::Ok(())
-   }};
+    }};
 }
 
 macro_rules! with_pool {
     ($pool: expr, $n: expr, |$name: ident| $block: block) => {{
-         use kvs::server_common::Result;
-         match $pool {
+        use kvs::server_common::Result;
+        match $pool {
             Pool::Rayon => {
                 let $name = RayonThreadPool::new($n)?;
                 let result: Result<()> = $block;
                 result
-            },
+            }
             Pool::SharedQueue => {
                 let $name = SharedQueueThreadPool::new($n)?;
                 let result: Result<()> = $block;
                 result
-            },
+            }
             Pool::Naive => {
                 let $name = NaiveThreadPool::new($n)?;
                 let result: Result<()> = $block;

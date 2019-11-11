@@ -23,96 +23,123 @@ fn write_queued_kvstore(c: &mut Criterion) {
     std::env::set_current_dir(temp.path()).unwrap();
     let store = RemoteEngine::spawn_new(None, Default::default(), Default::default());
     thread::sleep(Duration::from_secs(1));
-    c.bench_function("queued_kvstore", |b|
+    c.bench_function("queued_kvstore", |b| {
         b.iter(|| {
             write_heavy(store.clone(), RayonThreadPool::new(4).unwrap());
-        }),
-    );
+        })
+    });
 }
 
 fn read_queued_kvstore(c: &mut Criterion) {
     let temp = tempfile::tempdir().unwrap();
     std::env::set_current_dir(temp.path()).unwrap();
-    let store = RemoteEngine::spawn_new(Some("127.0.0.1:4005".parse().unwrap()), Default::default(), Default::default());
+    let store = RemoteEngine::spawn_new(
+        Some("127.0.0.1:4005".parse().unwrap()),
+        Default::default(),
+        Default::default(),
+    );
     thread::sleep(Duration::from_secs(1));
-    c.bench_function("queued_kvstore_read", |b|
+    c.bench_function("queued_kvstore_read", |b| {
         b.iter(|| {
             read_heavy(store.clone(), RayonThreadPool::new(4).unwrap());
-        }),
-    );
+        })
+    });
 }
 
 fn write_rayon_kvstore(c: &mut Criterion) {
     let temp = tempfile::tempdir().unwrap();
     std::env::set_current_dir(temp.path()).unwrap();
-    let store = RemoteEngine::spawn_new(Some("127.0.0.1:4001".parse().unwrap()), Default::default(), Pool::Rayon);
+    let store = RemoteEngine::spawn_new(
+        Some("127.0.0.1:4001".parse().unwrap()),
+        Default::default(),
+        Pool::Rayon,
+    );
     thread::sleep(Duration::from_secs(1));
-    c.bench_function("rayon_kvstore", |b|
+    c.bench_function("rayon_kvstore", |b| {
         b.iter(|| {
             write_heavy(store.clone(), RayonThreadPool::new(4).unwrap());
-        }),
-    );
+        })
+    });
 }
 
 fn read_rayon_kvstore(c: &mut Criterion) {
     let temp = tempfile::tempdir().unwrap();
     std::env::set_current_dir(temp.path()).unwrap();
-    let store = RemoteEngine::spawn_new(Some("127.0.0.1:4006".parse().unwrap()), Default::default(), Pool::Rayon);
+    let store = RemoteEngine::spawn_new(
+        Some("127.0.0.1:4006".parse().unwrap()),
+        Default::default(),
+        Pool::Rayon,
+    );
     thread::sleep(Duration::from_secs(1));
-    c.bench_function("rayon_kvstore_read", |b|
+    c.bench_function("rayon_kvstore_read", |b| {
         b.iter(|| {
             read_heavy(store.clone(), RayonThreadPool::new(4).unwrap());
-        }),
-    );
+        })
+    });
 }
-
 
 fn write_queued_sled(c: &mut Criterion) {
     let temp = tempfile::tempdir().unwrap();
     std::env::set_current_dir(temp.path()).unwrap();
-    let store = RemoteEngine::spawn_new(Some("127.0.0.1:4002".parse().unwrap()), Engine::Sled, Default::default());
+    let store = RemoteEngine::spawn_new(
+        Some("127.0.0.1:4002".parse().unwrap()),
+        Engine::Sled,
+        Default::default(),
+    );
     thread::sleep(Duration::from_secs(1));
-    c.bench_function("queued_sled", |b|
+    c.bench_function("queued_sled", |b| {
         b.iter(|| {
             write_heavy(store.clone(), RayonThreadPool::new(4).unwrap());
-        }),
-    );
+        })
+    });
 }
 
 fn read_queued_sled(c: &mut Criterion) {
     let temp = tempfile::tempdir().unwrap();
     std::env::set_current_dir(temp.path()).unwrap();
-    let store = RemoteEngine::spawn_new(Some("127.0.0.1:4007".parse().unwrap()), Engine::Sled, Default::default());
+    let store = RemoteEngine::spawn_new(
+        Some("127.0.0.1:4007".parse().unwrap()),
+        Engine::Sled,
+        Default::default(),
+    );
     thread::sleep(Duration::from_secs(1));
-    c.bench_function("queued_sled_read", |b|
+    c.bench_function("queued_sled_read", |b| {
         b.iter(|| {
             read_heavy(store.clone(), RayonThreadPool::new(4).unwrap());
-        }),
-    );
+        })
+    });
 }
 
 fn write_rayon_sled(c: &mut Criterion) {
     let temp = tempfile::tempdir().unwrap();
     std::env::set_current_dir(temp.path()).unwrap();
-    let store = RemoteEngine::spawn_new(Some("127.0.0.1:4003".parse().unwrap()), Engine::Sled, Pool::Rayon);
+    let store = RemoteEngine::spawn_new(
+        Some("127.0.0.1:4003".parse().unwrap()),
+        Engine::Sled,
+        Pool::Rayon,
+    );
     thread::sleep(Duration::from_secs(1));
-    c.bench_function("rayon_sled", |b|
+    c.bench_function("rayon_sled", |b| {
         b.iter(|| {
             write_heavy(store.clone(), RayonThreadPool::new(4).unwrap());
-        }),
-    );
+        })
+    });
 }
 
 fn read_rayon_sled(c: &mut Criterion) {
     let temp = tempfile::tempdir().unwrap();
     std::env::set_current_dir(temp.path()).unwrap();
-    let store = RemoteEngine::spawn_new(Some("127.0.0.1:4008".parse().unwrap()), Engine::Sled, Pool::Rayon);
+    let store = RemoteEngine::spawn_new(
+        Some("127.0.0.1:4008".parse().unwrap()),
+        Engine::Sled,
+        Pool::Rayon,
+    );
     thread::sleep(Duration::from_secs(1));
-    c.bench_function("read_rayon_sled", |b|
+    c.bench_function("read_rayon_sled", |b| {
         b.iter(|| {
             read_heavy(store.clone(), RayonThreadPool::new(4).unwrap());
-        }),
-    );
+        })
+    });
 }
 
 criterion_group! {
@@ -123,4 +150,3 @@ criterion_group! {
         read_rayon_sled, read_queued_kvstore, read_rayon_kvstore, read_queued_sled
 }
 criterion_main!(tbenches);
-

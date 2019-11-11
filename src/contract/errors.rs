@@ -5,7 +5,7 @@ use failure::Fail;
 pub enum Error {
     /// the contract data from TCP is malformed.
     #[fail(display = "Failed to parse the format of binary data.")]
-    MalformedBinary
+    MalformedBinary,
 }
 /// the `Result` type of our contract.
 pub type Result<T> = std::result::Result<T, Error>;

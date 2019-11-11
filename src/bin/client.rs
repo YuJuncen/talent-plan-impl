@@ -25,7 +25,7 @@ enum ClientOpt {
         long = "--addr",
         default_value = "127.0.0.1:4000"
         )]
-        server: SocketAddr
+        server: SocketAddr,
     },
     Get {
         /// a key string to get.
@@ -36,7 +36,7 @@ enum ClientOpt {
         long = "--addr",
         default_value = "127.0.0.1:4000"
         )]
-        server: SocketAddr
+        server: SocketAddr,
     },
     Rm {
         /// a key string to remove.
@@ -47,21 +47,23 @@ enum ClientOpt {
         long = "--addr",
         default_value = "127.0.0.1:4000"
         )]
-        server: SocketAddr
+        server: SocketAddr,
     },
 }
 #[derive(Debug, Eq, PartialEq)]
 enum Operate {
-    Get, Set, Rm
+    Get,
+    Set,
+    Rm,
 }
 
-impl ClientOpt  {
+impl ClientOpt {
     fn to_operate(&self) -> Operate {
         use Operate::*;
         match self {
-            Self::Set {..} => Set,
-            Self::Get {..} => Get,
-            Self::Rm {..} => Rm
+            Self::Set { .. } => Set,
+            Self::Get { .. } => Get,
+            Self::Rm { .. } => Rm,
         }
     }
 }
@@ -69,7 +71,7 @@ impl ClientOpt  {
 fn send_to(message: KvContractMessage, addr: SocketAddr) -> std::io::Result<KvContractMessage> {
     let bin = message.into_binary();
     let mut stream = std::net::TcpStream::connect(addr).unwrap();
-    stream.write(bin.as_slice())?;
+    stream.write_all(bin.as_slice())?;
     stream.shutdown(std::net::Shutdown::Write)?;
     Ok(KvContractMessage::parse(stream).unwrap())
 }
@@ -77,9 +79,9 @@ fn send_to(message: KvContractMessage, addr: SocketAddr) -> std::io::Result<KvCo
 impl ClientOpt {
     fn send(self) -> std::io::Result<KvContractMessage> {
         match self {
-            Self::Set {key, value, server} => send_to(KvContractMessage::put(key, value), server),
-            Self::Get {key, server} => send_to(KvContractMessage::get(key), server),
-            Self::Rm {key, server} => send_to(KvContractMessage::remove(key), server)
+            Self::Set { key, value, server } => send_to(KvContractMessage::put(key, value), server),
+            Self::Get { key, server } => send_to(KvContractMessage::get(key), server),
+            Self::Rm { key, server } => send_to(KvContractMessage::remove(key), server),
         }
     }
 }
@@ -93,11 +95,11 @@ fn main() -> std::io::Result<()> {
                 println!("Key not found");
             }
             exit(0);
-        },
-        Response::Content {content} => {
+        }
+        Response::Content { content } => {
             println!("{}", content);
             exit(0);
-        },
+        }
         Response::Error { reason } => {
             eprintln!("{}", reason);
             exit(1);

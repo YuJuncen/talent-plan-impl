@@ -31,7 +31,7 @@ fn filename_of(epoch: u64) -> String {
 fn into_result<T>(option: Option<T>) -> std::result::Result<T, ()> {
     match option {
         Some(x) => Ok(x),
-        None => Err(())
+        None => Err(()),
     }
 }
 
@@ -51,10 +51,10 @@ fn parse_gen(filename: &str) -> Option<u64> {
     lazy_static! {
         static ref PATTERN: Regex = Regex::new(r"^kvs-data-(\d+)$").unwrap();
     }
-    for cap in PATTERN.captures_iter(filename) {
-        return Some(format!("{}", &cap[1]).parse().unwrap());
-    }
-    None
+    PATTERN
+        .captures_iter(filename)
+        .next()
+        .map(|cap| cap[1].to_string().parse::<u64>().unwrap())
 }
 
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Clone, Copy)]
@@ -69,12 +69,22 @@ macro_rules! bin_loc {
         BinLocation {
             epoch: $gen,
             offset: $start,
-            length: $len
+            length: $len,
         }
     };
 }
 
 #[derive(Clone)]
+/// The default engine.
+///
+/// It implements the in-memory Hash index like bitcask.
+/// Using epoch-based garbage collection.
+///
+/// **Be aware**:
+/// It uses internal mutability to adapt the api defined on `KvsEngine` trait.
+/// (`get`, `set` and `rm` only needs `&self` instead of `&mut self`)
+/// When you want to share it between threads, simply `copy` it instead of use `Arc`,
+/// otherwise it may face runtime errors.
 pub struct KvStore {
     index: Arc<ConcHashMap<String, BinLocation>>,
     reader: RefCell<KvReader>,
@@ -82,7 +92,7 @@ pub struct KvStore {
     current_epoch: Arc<AtomicU64>,
     tail_epoch: Arc<AtomicU64>,
     path: PathBuf,
-    steal: Arc<RwLock<usize>>,
+    steal: Arc<AtomicU64>,
 }
 
 struct KvWriter {
@@ -96,7 +106,7 @@ impl KvWriter {
         let serialized = Self::serialize_command(&command);
         let writer = &mut self.file;
         let offset = writer.seek_to_end()?;
-        writer.write(serialized.as_bytes())?;
+        writer.write_all(serialized.as_bytes())?;
         writer.flush()?;
         Ok(bin_loc! { Gen[self.current_epoch] offset => serialized.as_bytes().len() })
     }
@@ -132,25 +142,36 @@ struct KvReader {
     active: Arc<ConcHashMap<u64, RwLock<()>>>,
 }
 
-
 impl Clone for KvReader {
     fn clone(&self) -> Self {
-        KvReader::open(self.root.clone(), self.tail_epoch.clone(), self.active.clone()).unwrap()
+        KvReader::open(
+            self.root.clone(),
+            self.tail_epoch.clone(),
+            self.active.clone(),
+        )
+            .unwrap()
     }
 }
 
 impl KvReader {
-    fn open_epoch(readers: &mut BTreeMap<u64, File>, current_epoch: u64, root: impl AsRef<Path>, epoch: u64) -> Result<&mut File> {
+    fn open_epoch(
+        readers: &mut BTreeMap<u64, File>,
+        current_epoch: u64,
+        root: impl AsRef<Path>,
+        epoch: u64,
+    ) -> Result<&mut File> {
         if epoch < current_epoch {
             panic!("KV_READER: trying to open an file that elder than current epoch!");
         }
-        Ok(readers.entry(epoch).or_insert(OpenOptions::new()
-            .read(true)
-            .open(root.as_ref().join(filename_of(epoch)))
-            .map_err(|e| KvError::FailToOpenFile {
-                file_name: filename_of(epoch),
-                io_error: e,
-            })?))
+        Ok(readers.entry(epoch).or_insert(
+            OpenOptions::new()
+                .read(true)
+                .open(root.as_ref().join(filename_of(epoch)))
+                .map_err(|e| KvError::FailToOpenFile {
+                    file_name: filename_of(epoch),
+                    io_error: e,
+                })?,
+        ))
     }
 
     // This file may be removed by other reader, so it's ok to fail to remove file.
@@ -171,7 +192,9 @@ impl KvReader {
 
     fn forget_old_time(&mut self) -> Result<()> {
         let epoch = self.tail_epoch.load(Ordering::SeqCst);
-        let epochs = self.active.iter()
+        let epochs = self
+            .active
+            .iter()
             .map(|acc| acc.0)
             .filter(|&&x| x < epoch)
             .map(ToOwned::to_owned)
@@ -190,10 +213,12 @@ impl KvReader {
             self.active.insert(location.epoch, RwLock::new(()));
         }
         let _guard = self.active.find(&location.epoch).unwrap().get().read()?;
-        let reader = KvReader::open_epoch(&mut self.readers,
-                                          self.tail_epoch.load(Ordering::SeqCst),
-                                          &self.root,
-                                          location.epoch)?;
+        let reader = KvReader::open_epoch(
+            &mut self.readers,
+            self.tail_epoch.load(Ordering::SeqCst),
+            &self.root,
+            location.epoch,
+        )?;
         let mut buf = vec![0u8; location.length];
         reader.seek_to(location.offset)?;
         reader.read_exact(buf.as_mut_slice())?;
@@ -201,7 +226,11 @@ impl KvReader {
         r.map_err(|e| e.into())
     }
 
-    pub fn open(path: impl AsRef<Path>, epoch: Arc<AtomicU64>, active: Arc<ConcHashMap<u64, RwLock<()>>>) -> Result<Self> {
+    pub fn open(
+        path: impl AsRef<Path>,
+        epoch: Arc<AtomicU64>,
+        active: Arc<ConcHashMap<u64, RwLock<()>>>,
+    ) -> Result<Self> {
         Ok(KvReader {
             readers: BTreeMap::new(),
             root: path.as_ref().to_owned(),
@@ -212,7 +241,7 @@ impl KvReader {
 }
 
 impl KvStore {
-    const STEAL_THRESHOLDS: usize = 1024 * 1024 * 1; // 1MB
+    const STEAL_THRESHOLDS: u64 = 1024 * 1024 * 8; // 8MB
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -234,7 +263,8 @@ impl KvCommand {
         match self {
             KvCommand::Put { key, .. } => key,
             KvCommand::Rm { key } => key,
-        }.as_str()
+        }
+            .as_str()
     }
 }
 
@@ -256,7 +286,6 @@ impl KvsEngine for KvStore {
             Put { value, .. } => Ok(Some(value)),
         }
     }
-
 
     /// Put a value into the KvStore.
     /// This operation will be automatically persisted into the log file.
@@ -291,7 +320,7 @@ struct InitIndex {
     index: ConcHashMap<String, BinLocation>,
     epoch: u64,
     tail_epoch: u64,
-    steal: usize,
+    steal: u64,
 }
 
 impl InitIndex {
@@ -304,14 +333,14 @@ impl InitIndex {
         }
     }
 
-    fn override_record(&mut self, key: &str, new: BinLocation) -> Option<usize> {
+    fn override_record(&mut self, key: &str, new: BinLocation) -> Option<u64> {
         match self.index.find(key) {
-            Some(ref old) if old.get().epoch > new.epoch =>
-                Some(new.length),
+            Some(ref old) if old.get().epoch > new.epoch => Some(new.length as u64),
             any => {
                 drop(any);
-                self.index.insert(key.to_owned(), new)
-                    .map(|old| old.length)
+                self.index
+                    .insert(key.to_owned(), new)
+                    .map(|old| old.length as u64)
             }
         }
     }
@@ -321,14 +350,20 @@ impl KvStore {
     fn enumerate_epoch_files(p: impl AsRef<Path>) -> impl Iterator<Item=(PathBuf, u64)> {
         WalkDir::new(p)
             .into_iter()
-            .filter(|entry| entry
-                .as_ref()
-                .map_err(|_| ())
-                .and_then(|entry|
-                    into_result(entry.file_name()
-                        .to_str()
-                        .map(|s| s.starts_with("kvs-data-"))))
-                .unwrap_or(false))
+            .filter(|entry| {
+                entry
+                    .as_ref()
+                    .map_err(|_| ())
+                    .and_then(|entry| {
+                        into_result(
+                            entry
+                                .file_name()
+                                .to_str()
+                                .map(|s| s.starts_with("kvs-data-")),
+                        )
+                    })
+                    .unwrap_or(false)
+            })
             .map(|file| {
                 let file = file.unwrap();
                 let path = file.path().to_owned();
@@ -341,7 +376,7 @@ impl KvStore {
     fn build_index(path: impl AsRef<Path>) -> Result<InitIndex> {
         let entries: Vec<(PathBuf, u64)> = KvStore::enumerate_epoch_files(path).collect();
         let mut res = InitIndex::new();
-        if entries.len() == 0 {
+        if entries.is_empty() {
             res.epoch = 1;
             res.tail_epoch = 0;
             return Ok(res);
@@ -351,15 +386,21 @@ impl KvStore {
             let mut buf = String::new();
             let mut reader = BufReader::new(File::open(filename)?);
             let mut x;
-            if epoch > res.epoch { res.epoch = epoch; }
-            if epoch < res.tail_epoch { res.tail_epoch = epoch; }
+            if epoch > res.epoch {
+                res.epoch = epoch;
+            }
+            if epoch < res.tail_epoch {
+                res.tail_epoch = epoch;
+            }
             while {
                 x = reader.read_line(&mut buf)?;
                 x > 0
             } {
                 let json: KvCommand = serde_json::from_slice(buf.as_bytes())?;
                 let offset = reader.current_position()?;
-                if let Some(n) = res.override_record(json.key(), bin_loc! {Gen[epoch] offset - x => x }) {
+                if let Some(n) =
+                res.override_record(json.key(), bin_loc! {Gen[epoch] offset - x => x })
+                {
                     res.steal += n
                 };
                 buf.clear();
@@ -368,34 +409,29 @@ impl KvStore {
         Ok(res)
     }
 
-    fn override_record(&self, key: &str, location: BinLocation) -> Option<usize> {
+    fn override_record(&self, key: &str, location: BinLocation) -> Option<u64> {
         let idx = self.index.as_ref();
         match idx.find(key) {
-            Some(ref old) if old.get().epoch > location.epoch =>
-                Some(location.length),
+            Some(ref old) if old.get().epoch > location.epoch => Some(location.length as u64),
             any => {
                 drop(any);
                 idx.insert(key.to_owned(), location)
-                    .map(|old| old.length)
+                    .map(|old| old.length as u64)
             }
         }
     }
 
-    fn add_steal(&self, size: usize) -> Result<()> {
-        let mut lock = self.steal.write()?;
-        let origin = *lock;
-        *lock = origin + size;
+    fn add_steal(&self, size: u64) -> Result<()> {
+        self.steal.fetch_add(size, Ordering::SeqCst);
         Ok(())
     }
 
-    fn get_steal(&self) -> Result<usize> {
-        let lock = self.steal.read()?;
-        Ok(*lock)
+    fn get_steal(&self) -> Result<u64> {
+        Ok(self.steal.load(Ordering::SeqCst))
     }
 
     fn reset_steal(&self) -> Result<()> {
-        let mut lock = self.steal.write()?;
-        *lock = 0;
+        self.steal.store(0, Ordering::SeqCst);
         Ok(())
     }
 
@@ -443,7 +479,6 @@ impl KvStore {
         Ok(())
     }
 
-
     /// make an KvStore by an database file.
     ///
     /// # Error
@@ -457,7 +492,11 @@ impl KvStore {
         let writer = Arc::new(Mutex::new(KvWriter::open(path.as_ref(), init.epoch)?));
         let epoch = Arc::new(AtomicU64::new(init.epoch));
         let tail_epoch = Arc::new(AtomicU64::new(init.tail_epoch));
-        let reader = KvReader::open(path.as_ref(), tail_epoch.clone(), Arc::new(ConcHashMap::<_, _, RandomState>::new()))?;
+        let reader = KvReader::open(
+            path.as_ref(),
+            tail_epoch.clone(),
+            Arc::new(ConcHashMap::<_, _, RandomState>::new()),
+        )?;
         let store = KvStore {
             reader: RefCell::new(reader),
             writer,
@@ -465,9 +504,8 @@ impl KvStore {
             current_epoch: epoch,
             path: Path::new(path.as_ref()).to_owned(),
             index: Arc::new(init.index),
-            steal: Arc::new(RwLock::new(init.steal)),
+            steal: Arc::new(AtomicU64::new(init.steal as u64)),
         };
         Ok(store)
     }
 }
-

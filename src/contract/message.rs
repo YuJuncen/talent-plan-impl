@@ -15,7 +15,7 @@ pub struct KvContractMessage {
     /// the operate type, see the constant below.
     pub operate_type: u8,
     /// the parameter of the message.
-    pub param: HashMap<String, String>
+    pub param: HashMap<String, String>,
 }
 
 /// the request view of a message.
@@ -24,20 +24,20 @@ pub enum Request<'a> {
     /// get request view.
     Get {
         /// the key to get.
-        key: &'a str
+        key: &'a str,
     },
     /// set request view.
     Set {
         /// the key to set.
         key: &'a str,
         /// the value to set.
-        value : &'a str
+        value: &'a str,
     },
     /// rm request view.
     Remove {
         /// the key to remove.
-        key: &'a str
-    }
+        key: &'a str,
+    },
 }
 
 /// the response view of a message.
@@ -46,9 +46,15 @@ pub enum Response<'a> {
     /// response with no content.
     NoContent,
     /// response with some message.
-    Content { content: &'a str } ,
+    Content {
+        /// content of the message.
+        content: &'a str,
+    },
     /// response with error.
-    Error { reason: &'a str }
+    Error {
+        /// reason of this error.
+        reason: &'a str,
+    },
 }
 
 impl KvContractMessage {
@@ -66,7 +72,7 @@ impl KvContractMessage {
     pub fn get(key: String) -> Self {
         KvContractMessage {
             operate_type: Self::GET,
-            param: vec![("key".to_owned(), key)].into_iter().collect()
+            param: vec![("key".to_owned(), key)].into_iter().collect(),
         }
     }
 
@@ -74,7 +80,9 @@ impl KvContractMessage {
     pub fn put(key: String, value: String) -> Self {
         KvContractMessage {
             operate_type: Self::PUT,
-            param: vec![("key".to_owned(), key), ("value".to_owned(), value)].into_iter().collect()
+            param: vec![("key".to_owned(), key), ("value".to_owned(), value)]
+                .into_iter()
+                .collect(),
         }
     }
 
@@ -82,15 +90,15 @@ impl KvContractMessage {
     pub fn remove(key: String) -> Self {
         KvContractMessage {
             operate_type: Self::REMOVE,
-            param: vec![("key".to_owned(), key)].into_iter().collect()
+            param: vec![("key".to_owned(), key)].into_iter().collect(),
         }
     }
 
-    /// create an ok response message.
+    /// create an ok response message, with no content.
     pub fn response_no_content() -> Self {
         KvContractMessage {
             operate_type: Self::RESPONSE_NO_CONTENT,
-            param: HashMap::new()
+            param: HashMap::new(),
         }
     }
 
@@ -98,14 +106,15 @@ impl KvContractMessage {
     pub fn response_err(reason: String) -> Self {
         KvContractMessage {
             operate_type: Self::RESPONSE_ERR,
-            param: vec![("reason".to_owned(), reason)].into_iter().collect()
+            param: vec![("reason".to_owned(), reason)].into_iter().collect(),
         }
     }
 
+    /// create a success response with some content.
     pub fn response_content(content: String) -> Self {
         KvContractMessage {
             operate_type: Self::RESPONSE_WITH_CONTENT,
-            param: vec![("content".to_owned(), content)].into_iter().collect()
+            param: vec![("content".to_owned(), content)].into_iter().collect(),
         }
     }
 
@@ -141,10 +150,21 @@ impl KvContractMessage {
     /// When failed to parse it as an request message, return `None`.
     pub fn to_request(&self) -> Option<Request> {
         match self.operate_type {
-            Self::PUT => self.param.get("key").and_then(|key| self.param.get("value").map(|value| Request::Set { key: key.as_str(), value: value.as_str() })),
-            Self::GET => self.param.get("key").map(|key| Request::Get { key: key.as_str() }),
-            Self::REMOVE => self.param.get("key").map(|key| Request::Remove {key: key.as_str()}),
-            _ => None
+            Self::PUT => self.param.get("key").and_then(|key| {
+                self.param.get("value").map(|value| Request::Set {
+                    key: key.as_str(),
+                    value: value.as_str(),
+                })
+            }),
+            Self::GET => self
+                .param
+                .get("key")
+                .map(|key| Request::Get { key: key.as_str() }),
+            Self::REMOVE => self
+                .param
+                .get("key")
+                .map(|key| Request::Remove { key: key.as_str() }),
+            _ => None,
         }
     }
 
@@ -156,9 +176,15 @@ impl KvContractMessage {
     pub fn to_response(&self) -> Option<Response> {
         match self.operate_type {
             Self::RESPONSE_NO_CONTENT => Some(Response::NoContent),
-            Self::RESPONSE_WITH_CONTENT => self.param.get("content").map(|content| Response::Content { content: content.as_str() }),
-            Self::RESPONSE_ERR => self.param.get("reason").map(|reason| Response::Error {reason: reason.as_str()}),
-            _ => None
+            Self::RESPONSE_WITH_CONTENT => {
+                self.param.get("content").map(|content| Response::Content {
+                    content: content.as_str(),
+                })
+            }
+            Self::RESPONSE_ERR => self.param.get("reason").map(|reason| Response::Error {
+                reason: reason.as_str(),
+            }),
+            _ => None,
         }
     }
 }
