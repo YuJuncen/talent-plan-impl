@@ -5,7 +5,7 @@ use std::collections::hash_map::RandomState;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, atomic::AtomicU64, Mutex, RwLock};
+use std::sync::{Arc, atomic::AtomicU64, Mutex};
 use std::thread;
 
 use concurrent_hashmap::ConcHashMap;
@@ -139,7 +139,7 @@ struct KvReader {
     readers: BTreeMap<u64, File>,
     tail_epoch: Arc<AtomicU64>,
     root: PathBuf,
-    active: Arc<ConcHashMap<u64, RwLock<()>>>,
+    active: Arc<ConcHashMap<u64, AtomicU64>>,
 }
 
 impl Clone for KvReader {
@@ -148,44 +148,56 @@ impl Clone for KvReader {
             self.root.clone(),
             self.tail_epoch.clone(),
             self.active.clone(),
-        )
-            .unwrap()
+        ).unwrap()
+    }
+}
+
+impl Drop for KvReader {
+    #[allow(unused_must_use)]
+    fn drop(&mut self) {
+        let epochs: Vec<u64> = self.readers.keys().cloned().collect();
+        for epoch in epochs {
+            self.drop_epoch(epoch);
+        }
     }
 }
 
 impl KvReader {
     fn open_epoch(
-        readers: &mut BTreeMap<u64, File>,
-        current_epoch: u64,
-        root: impl AsRef<Path>,
+        &mut self,
         epoch: u64,
     ) -> Result<&mut File> {
-        if epoch < current_epoch {
+        if epoch < self.tail_epoch.load(Ordering::SeqCst) {
             panic!("KV_READER: trying to open an file that elder than current epoch!");
         }
-        Ok(readers.entry(epoch).or_insert(
-            OpenOptions::new()
+        if self.readers.get(&epoch).is_none() {
+            self.readers.insert(epoch, OpenOptions::new()
                 .read(true)
-                .open(root.as_ref().join(filename_of(epoch)))
+                .open(self.root.join(filename_of(epoch).as_str()))
                 .map_err(|e| KvError::FailToOpenFile {
                     file_name: filename_of(epoch),
                     io_error: e,
-                })?,
-        ))
+                })?);
+            if self.active.find(&epoch).is_none() {
+                self.active.insert(epoch, AtomicU64::new(0));
+            }
+            self.active.find(&epoch).unwrap().get()
+                .fetch_add(1, Ordering::SeqCst);
+        }
+        Ok(self.readers.get_mut(&epoch).unwrap())
     }
 
     // This file may be removed by other reader, so it's ok to fail to remove file.
     #[allow(unused_must_use)]
     fn drop_epoch(&mut self, epoch: u64) -> Result<()> {
-        self.readers.remove(&epoch);
-        let _active = self.active.clone();
-        if let Some(x) = self.active.remove(&epoch) {
-            let path = self.root.clone();
-            thread::spawn(move || -> Result<()> {
-                let _guard = x.write()?;
-                std::fs::remove_file(path.join(filename_of(epoch)));
-                Ok(())
-            });
+        let count = self.active.find(&epoch).expect("DROP_EPOCH: try to drop epoch not opened.")
+            .get();
+        if self.readers.remove(&epoch).is_some() {
+            count.fetch_sub(1, Ordering::SeqCst);
+        }
+        if count.load(Ordering::SeqCst) == 0 && epoch < self.tail_epoch.load(Ordering::SeqCst) {
+            self.active.remove(&epoch);
+            std::fs::remove_file(self.root.join(filename_of(epoch)));
         }
         Ok(())
     }
@@ -209,16 +221,7 @@ impl KvReader {
     pub fn load_command(&mut self, location: BinLocation) -> Result<KvCommand> {
         self.forget_old_time()?;
 
-        if self.active.find(&location.epoch).is_none() {
-            self.active.insert(location.epoch, RwLock::new(()));
-        }
-        let _guard = self.active.find(&location.epoch).unwrap().get().read()?;
-        let reader = KvReader::open_epoch(
-            &mut self.readers,
-            self.tail_epoch.load(Ordering::SeqCst),
-            &self.root,
-            location.epoch,
-        )?;
+        let reader = self.open_epoch(location.epoch)?;
         let mut buf = vec![0u8; location.length];
         reader.seek_to(location.offset)?;
         reader.read_exact(buf.as_mut_slice())?;
@@ -229,7 +232,7 @@ impl KvReader {
     pub fn open(
         path: impl AsRef<Path>,
         epoch: Arc<AtomicU64>,
-        active: Arc<ConcHashMap<u64, RwLock<()>>>,
+        active: Arc<ConcHashMap<u64, AtomicU64>>,
     ) -> Result<Self> {
         Ok(KvReader {
             readers: BTreeMap::new(),
