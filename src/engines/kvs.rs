@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, atomic::AtomicU64, Mutex};
 use std::thread;
 
-use concurrent_hashmap::ConcHashMap;
+use lockfree::map::Map;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
@@ -87,7 +87,7 @@ macro_rules! bin_loc {
 /// So it doesn't implement `Sync` trait.
 /// When you want to share it between threads, simply `copy` it instead of use `Arc`.
 pub struct KvStore<B1: BuildHasher = RandomState, B2: BuildHasher = RandomState> {
-    index: Arc<ConcHashMap<String, BinLocation, B1>>,
+    index: Arc<Map<String, BinLocation, B1>>,
     reader: RefCell<KvReader<B2>>,
     writer: Arc<Mutex<KvWriter>>,
     current_epoch: Arc<AtomicU64>,
@@ -140,7 +140,7 @@ struct KvReader<B: BuildHasher = RandomState> {
     readers: BTreeMap<u64, File>,
     tail_epoch: Arc<AtomicU64>,
     root: PathBuf,
-    active: Arc<ConcHashMap<u64, AtomicU64, B>>,
+    active: Arc<Map<u64, AtomicU64, B>>,
 }
 
 impl<B: BuildHasher> Clone for KvReader<B> {
@@ -179,10 +179,10 @@ impl<B: BuildHasher> KvReader<B> {
                     file_name: filename_of(epoch),
                     io_error: e,
                 })?);
-            if self.active.find(&epoch).is_none() {
+            if self.active.get(&epoch).is_none() {
                 self.active.insert(epoch, AtomicU64::new(0));
             }
-            self.active.find(&epoch).unwrap().get()
+            self.active.get(&epoch).unwrap().val()
                 .fetch_add(1, Ordering::SeqCst);
         }
         Ok(self.readers.get_mut(&epoch).unwrap())
@@ -191,12 +191,11 @@ impl<B: BuildHasher> KvReader<B> {
     // This file may be removed by other reader, so it's ok to fail to remove file.
     #[allow(unused_must_use)]
     fn drop_epoch(&mut self, epoch: u64) -> Result<()> {
-        let count = self.active.find(&epoch).expect("DROP_EPOCH: try to drop epoch not opened.")
-            .get();
+        let count = self.active.get(&epoch).expect("DROP_EPOCH: try to drop epoch not opened.");
         if self.readers.remove(&epoch).is_some() {
-            count.fetch_sub(1, Ordering::SeqCst);
+            count.val().fetch_sub(1, Ordering::SeqCst);
         }
-        if count.load(Ordering::SeqCst) == 0 && epoch < self.tail_epoch.load(Ordering::SeqCst) {
+        if count.val().load(Ordering::SeqCst) == 0 && epoch < self.tail_epoch.load(Ordering::SeqCst) {
             self.active.remove(&epoch);
             std::fs::remove_file(self.root.join(filename_of(epoch)));
         }
@@ -208,9 +207,8 @@ impl<B: BuildHasher> KvReader<B> {
         let epochs = self
             .active
             .iter()
-            .map(|acc| acc.0)
-            .filter(|&&x| x < epoch)
-            .map(ToOwned::to_owned)
+            .map(|acc| acc.key().to_owned())
+            .filter(|&x| x < epoch)
             .collect::<Vec<u64>>();
         for i in epochs {
             self.drop_epoch(i)?;
@@ -233,7 +231,7 @@ impl<B: BuildHasher> KvReader<B> {
     pub fn open(
         path: impl AsRef<Path>,
         epoch: Arc<AtomicU64>,
-        active: Arc<ConcHashMap<u64, AtomicU64, B>>,
+        active: Arc<Map<u64, AtomicU64, B>>,
     ) -> Result<Self> {
         Ok(KvReader {
             readers: BTreeMap::new(),
@@ -279,12 +277,12 @@ impl KvsEngine for KvStore {
     ///
     /// when IO/serialize error happens during read data before the log, we will
     fn get(&self, key: String) -> Result<Option<String>> {
-        let cache = self.index.find(key.as_str());
+        let cache = self.index.get(key.as_str());
         if cache.is_none() {
             return Ok(None);
         }
         let pos = cache.unwrap();
-        let cmd = self.reader.borrow_mut().load_command(pos.get().clone())?;
+        let cmd = self.reader.borrow_mut().load_command(pos.val().clone())?;
         match cmd {
             Rm { .. } => Ok(None),
             Put { value, .. } => Ok(Some(value)),
@@ -310,7 +308,7 @@ impl KvsEngine for KvStore {
     /// when the key isn't present, will throw `KeyNotFound`.
     /// when IO/serialize error happens during save the command into log, will throw error about them.
     fn remove(&self, key: String) -> Result<()> {
-        if self.index.find(key.as_str()).is_none() {
+        if self.index.get(key.as_str()).is_none() {
             return Err(KeyNotFound);
         }
 
@@ -321,7 +319,7 @@ impl KvsEngine for KvStore {
 }
 
 struct InitIndex {
-    index: ConcHashMap<String, BinLocation>,
+    index: Map<String, BinLocation>,
     epoch: u64,
     tail_epoch: u64,
     steal: u64,
@@ -330,7 +328,7 @@ struct InitIndex {
 impl InitIndex {
     fn new() -> Self {
         InitIndex {
-            index: ConcHashMap::<_, _, RandomState>::new(),
+            index: Map::new(),
             epoch: 0,
             tail_epoch: u64::max_value(),
             steal: 0,
@@ -338,13 +336,12 @@ impl InitIndex {
     }
 
     fn override_record(&mut self, key: &str, new: BinLocation) -> Option<u64> {
-        match self.index.find(key) {
-            Some(ref old) if old.get().epoch > new.epoch => Some(new.length as u64),
-            any => {
-                drop(any);
+        match self.index.get(key) {
+            Some(ref old) if old.val().epoch > new.epoch => Some(new.length as u64),
+            _ => {
                 self.index
                     .insert(key.to_owned(), new)
-                    .map(|old| old.length as u64)
+                    .map(|old| old.val().length as u64)
             }
         }
     }
@@ -415,12 +412,12 @@ impl KvStore {
 
     fn override_record(&self, key: &str, location: BinLocation) -> Option<u64> {
         let idx = self.index.as_ref();
-        match idx.find(key) {
-            Some(ref old) if old.get().epoch > location.epoch => Some(location.length as u64),
-            any => {
-                drop(any);
-                idx.insert(key.to_owned(), location)
-                    .map(|old| old.length as u64)
+        match idx.get(key) {
+            Some(ref old) if old.val().epoch > location.epoch => Some(location.length as u64),
+            _ => {
+                idx
+                    .insert(key.to_owned(), location)
+                    .map(|old| old.val().length as u64)
             }
         }
     }
@@ -475,10 +472,10 @@ impl KvStore {
 
     fn compact_file_to_writer(&self, mut writer: KvWriter) -> Result<()> {
         let idx = self.index.as_ref();
-        for (k, v) in idx.clone().iter() {
-            let command = self.reader.borrow_mut().load_command(*v)?;
+        for kv in idx.iter() {
+            let command = self.reader.borrow_mut().load_command(*kv.val())?;
             let new_location = writer.write_command(command)?;
-            self.override_record(k.as_str(), new_location);
+            self.override_record(kv.key().as_str(), new_location);
         }
         Ok(())
     }
@@ -499,7 +496,7 @@ impl KvStore {
         let reader = KvReader::open(
             path.as_ref(),
             tail_epoch.clone(),
-            Arc::new(ConcHashMap::<_, _, RandomState>::new()),
+            Arc::new(Map::new()),
         )?;
         let store = KvStore {
             reader: RefCell::new(reader),

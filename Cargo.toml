@@ -29,6 +29,7 @@ concurrent-hashmap = "0.2"
 atomic = "0.4"
 lazy_static = "1"
 regex = "1"
+lockfree = "0.5"
 
 [dev-dependencies]
 criterion = "0.3"
