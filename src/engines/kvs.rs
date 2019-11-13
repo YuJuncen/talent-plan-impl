@@ -3,6 +3,7 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::collections::hash_map::RandomState;
 use std::fs::{File, OpenOptions};
+use std::hash::BuildHasher;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, atomic::AtomicU64, Mutex};
@@ -81,13 +82,13 @@ macro_rules! bin_loc {
 /// Using epoch-based garbage collection.
 ///
 /// **Be aware**:
-/// It uses internal mutability to adapt the api defined on `KvsEngine` trait.
+/// It uses `Refcell` to adapt the api defined on `KvsEngine` trait,
 /// (`get`, `set` and `rm` only needs `&self` instead of `&mut self`)
-/// When you want to share it between threads, simply `copy` it instead of use `Arc`,
-/// otherwise it may face runtime errors.
-pub struct KvStore {
-    index: Arc<ConcHashMap<String, BinLocation>>,
-    reader: RefCell<KvReader>,
+/// So it doesn't implement `Sync` trait.
+/// When you want to share it between threads, simply `copy` it instead of use `Arc`.
+pub struct KvStore<B1: BuildHasher = RandomState, B2: BuildHasher = RandomState> {
+    index: Arc<ConcHashMap<String, BinLocation, B1>>,
+    reader: RefCell<KvReader<B2>>,
     writer: Arc<Mutex<KvWriter>>,
     current_epoch: Arc<AtomicU64>,
     tail_epoch: Arc<AtomicU64>,
@@ -135,14 +136,14 @@ impl KvWriter {
     }
 }
 
-struct KvReader {
+struct KvReader<B: BuildHasher = RandomState> {
     readers: BTreeMap<u64, File>,
     tail_epoch: Arc<AtomicU64>,
     root: PathBuf,
-    active: Arc<ConcHashMap<u64, AtomicU64>>,
+    active: Arc<ConcHashMap<u64, AtomicU64, B>>,
 }
 
-impl Clone for KvReader {
+impl<B: BuildHasher> Clone for KvReader<B> {
     fn clone(&self) -> Self {
         KvReader::open(
             self.root.clone(),
@@ -152,7 +153,7 @@ impl Clone for KvReader {
     }
 }
 
-impl Drop for KvReader {
+impl<B: BuildHasher> Drop for KvReader<B> {
     #[allow(unused_must_use)]
     fn drop(&mut self) {
         let epochs: Vec<u64> = self.readers.keys().cloned().collect();
@@ -162,7 +163,7 @@ impl Drop for KvReader {
     }
 }
 
-impl KvReader {
+impl<B: BuildHasher> KvReader<B> {
     fn open_epoch(
         &mut self,
         epoch: u64,
@@ -232,7 +233,7 @@ impl KvReader {
     pub fn open(
         path: impl AsRef<Path>,
         epoch: Arc<AtomicU64>,
-        active: Arc<ConcHashMap<u64, AtomicU64>>,
+        active: Arc<ConcHashMap<u64, AtomicU64, B>>,
     ) -> Result<Self> {
         Ok(KvReader {
             readers: BTreeMap::new(),
