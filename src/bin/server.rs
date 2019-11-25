@@ -128,7 +128,6 @@ fn make_task<E: KvsEngine>(stream: TcpListener, engine: E) -> impl Future<Item=(
         })
         .map_err(|err| {
             error!("server internal io error: {:?}", err);
-            ()
         })
 }
 

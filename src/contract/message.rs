@@ -45,9 +45,15 @@ pub enum Response<'a> {
     /// response with no content.
     NoContent,
     /// response with some message.
-    Content { content: &'a str } ,
+    Content {
+        /// content of the message.
+        content: &'a str,
+    },
     /// response with error.
-    Error { reason: &'a str }
+    Error {
+        /// reason of this error.
+        reason: &'a str,
+    },
 }
 
 impl KvContractMessage {
@@ -101,6 +107,7 @@ impl KvContractMessage {
         }
     }
 
+    /// create a success response with some content.
     pub fn response_content(content: String) -> Self {
         KvContractMessage {
             operate_type: Self::RESPONSE_WITH_CONTENT,

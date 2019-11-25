@@ -69,7 +69,7 @@ impl ClientOpt  {
 fn send_to(message: KvContractMessage, addr: SocketAddr) -> std::io::Result<KvContractMessage> {
     let bin = message.into_binary();
     let mut stream = std::net::TcpStream::connect(addr).unwrap();
-    stream.write(bin.as_slice())?;
+    stream.write_all(bin.as_slice())?;
     stream.shutdown(std::net::Shutdown::Write)?;
     Ok(KvContractMessage::parse(stream).unwrap())
 }

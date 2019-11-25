@@ -23,6 +23,14 @@ struct BinLocation {
 }
 
 #[derive(Clone)]
+/// The default engine.
+///
+/// It implements the in-memory Hash index like bitcask.
+/// **Be aware**:
+/// It uses `Refcell` to adapt the api defined on `KvsEngine` trait,
+/// (`get`, `set` and `rm` only needs `&self` instead of `&mut self`)
+/// So it doesn't implement `Sync` trait.
+/// When you want to share it between threads, simply `copy` it instead of use `Arc`.
 pub struct KvStore {
     index: Arc<RwLock<HashMap<String, BinLocation>>>,
     reader: RefCell<KvReader>,
@@ -31,7 +39,7 @@ pub struct KvStore {
     steal: Arc<RwLock<usize>>,
 }
 
-pub struct KvReader {
+struct KvReader {
     file: File,
     root: PathBuf,
 }

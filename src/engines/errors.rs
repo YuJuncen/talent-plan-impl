@@ -2,6 +2,7 @@ use std::sync::PoisonError;
 
 use failure::Fail;
 
+/// The result type used in the `KvEngine` context.
 pub type Result<T> = std::result::Result<T, KvError>;
 
 /// The Error type of `KvEngine` context.
