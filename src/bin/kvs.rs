@@ -42,8 +42,8 @@ fn main() -> Result<()> {
         }
         Get { key } => {
             let result = store.get(key)?;
-            if result.is_some() {
-                print!("{}", result.unwrap());
+            if let Some(item) = result {
+                print!("{}", item);
             } else {
                 print!("Key not found");
             }
@@ -52,7 +52,7 @@ fn main() -> Result<()> {
         Rm { key } => {
             let result = store.remove(key);
             if result.is_err() {
-                if let KvError::KeyNotFound = result.unwrap_err() {
+                if let Err(KvError::KeyNotFound) = result {
                     print!("Key not found")
                 }
                 exit(1)

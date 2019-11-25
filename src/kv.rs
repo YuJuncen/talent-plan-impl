@@ -17,6 +17,8 @@ struct BinLocation {
     length: usize,
 }
 
+/// The storage engine.
+/// It implements the in-memory Hash index like bitcask.
 pub struct KvStore {
     index: HashMap<String, BinLocation>,
     file: File,
@@ -25,7 +27,7 @@ pub struct KvStore {
 }
 
 impl KvStore {
-    const STEAL_THRESHOLDS: usize = 1024 * 1024 * 8; // 8MB
+    const STEAL_THRESHOLDS: usize = 1024 * 1024; // 1MB
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -151,7 +153,7 @@ impl KvStore {
                 io_error,
             })?;
         self.compact_file_to(&mut temp_file)?;
-        std::fs::copy(path, &self.path)?;
+        std::fs::copy(path, &self.path.join("kvs-db-data.json"))?;
         std::fs::remove_file(path)?;
         self.reopen_file()?;
         self.steal = 0;
@@ -187,7 +189,7 @@ impl KvStore {
         self.file = OpenOptions::new()
             .append(true)
             .read(true)
-            .open(&self.path.join("kvs-db-data.txt"))
+            .open(&self.path.join("kvs-db-data.json"))
             .map_err(|e| KvError::FailToOpenFile {
                 file_name: String::from(self.path.to_str().unwrap_or("unknown")),
                 io_error: e,
