@@ -2,6 +2,7 @@
 //! A key-value database.
 //!
 //! ## quick start
+//! [!!! NOTE: Those functions aren't implemented yet!]
 //! ```bash
 //! # to get value of $KEY_NAME.
 //! cargo run --bin kvs -- get $KEY_NAME
@@ -14,8 +15,6 @@
 #![deny(missing_docs)]
 #![deny(warnings)]
 
-pub use self::errors::{KvError, Result};
 pub use self::kv::KvStore;
 
-mod errors;
 mod kv;
