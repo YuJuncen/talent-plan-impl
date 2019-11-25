@@ -1,4 +1,3 @@
-use std::io::Read;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
 
@@ -10,6 +9,7 @@ use crate::{KvError, KvsEngine};
 use super::errors::Result;
 
 #[derive(Clone)]
+/// the adapter that wraps `sled::Db` to `KvsEngine`.
 pub struct SledEngine {
     db: Arc<RwLock<Db>>
 }
@@ -21,6 +21,7 @@ impl From<sled::Error> for KvError {
 }
 
 impl SledEngine {
+    /// open the `SledEngine` engine to some path.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         super::engine::check_engine::<&P>(&path, "sled")?;
 

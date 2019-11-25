@@ -232,7 +232,7 @@ impl KvStore {
     /// Compact the file.
     /// This will merge all the indices, only save the last put or rm operation in the log.
     /// This should be called maybe, so that the log file will not grow too fast.
-    pub fn compact_file(&self) -> Result<()> {
+    fn compact_file(&self) -> Result<()> {
         let path = &self.path.join("kvs-compact-temp-file");
         let mut temp_file = OpenOptions::new()
             .write(true)

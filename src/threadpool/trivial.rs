@@ -3,7 +3,8 @@ use super::pool::ThreadPool;
 pub struct TrivialThreadPool;
 
 impl TrivialThreadPool {
-    fn new() -> Self {
+    /// create a new thread pool.
+    pub fn new() -> Self {
         TrivialThreadPool
     }
 }

@@ -41,7 +41,3 @@ test = false
 name = "kvs-server"
 path = "src/bin/server.rs"
 test = false
-
-[[bench]]
-name = "kv_benchmark"
-harness = false
